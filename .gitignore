@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+recordings/
+.hls/
+config.json
+go2rtc.yaml
+go2rtc
+yolov8n.pt
+.claude/

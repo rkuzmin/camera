@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cameras</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #14161a; color: #e8e8e8; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; margin: 4px 0 12px; font-weight: 600; }
+  h3 { font-size: 14px; margin: 14px 0 6px; color: #ccc; }
+  .cams-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 12px; }
+  .cam-tile { background: #1c1f26; border-radius: 10px; overflow: hidden; }
+  .video-box { position: relative; background: #000; min-height: 200px; }
+  .video-box img { display: block; width: 100%; }
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+             color: #999; font-size: 14px; text-align: center; padding: 20px; }
+  .cam-info { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+  .cam-name { font-weight: 600; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 12px 0; }
+  button { border: 0; border-radius: 8px; padding: 10px 18px; font-size: 15px; cursor: pointer;
+           background: #2a2f3a; color: #e8e8e8; }
+  button:hover { background: #353b48; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.small { padding: 6px 12px; font-size: 13px; }
+  button.rec { background: #c0392b; color: #fff; }
+  button.on  { background: #27ae60; color: #fff; }
+  button.danger { background: #802020; color: #fff; }
+  .status { font-size: 14px; color: #aaa; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #777; margin-right: 6px; }
+  .dot.ok { background: #27ae60; }
+  .dot.rec { background: #e74c3c; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .tabs { display: flex; gap: 4px; margin: 4px 0 16px; border-bottom: 1px solid #2a2d33; flex-wrap: wrap; }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+                 padding: 10px 16px; font-size: 15px; color: #aaa; }
+  .tabs button:hover { background: none; color: #e8e8e8; }
+  .tabs button.active { color: #fff; border-bottom-color: #2a72c9; }
+  .view { display: none; }
+  .view.active { display: block; }
+  label { display: block; margin: 10px 0 4px; font-size: 13px; color: #aaa; }
+  input, select { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #333; background: #12141a; color: #eee; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .hint { font-size: 12px; color: #777; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 8px 6px; border-bottom: 1px solid #2a2d33; }
+  a { color: #6cb2ff; text-decoration: none; }
+  .del { color: #e74c3c; cursor: pointer; background: none; padding: 4px 8px; }
+  .dets { color: #f5a623; font-size: 13px; }
+  .rec-tag { display: inline-block; font-size: 11px; background: #34506b; color: #cfe3ff;
+             border-radius: 4px; padding: 1px 7px; margin-right: 4px; }
+  .cam { background: #12141a; border: 1px solid #2a2d33; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .cam b { color: #6cb2ff; }
+  .cam .tag { display: inline-block; font-size: 11px; background: #27ae60; color: #fff; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  .cam .meta { font-size: 12px; color: #888; margin: 3px 0; }
+  .cam .sug { display: block; width: 100%; text-align: left; font-family: monospace; font-size: 12px;
+              margin: 4px 0 0; padding: 6px 8px; word-break: break-all; }
+  .spin { display:inline-block; width:12px; height:12px; border:2px solid #555; border-top-color:#6cb2ff;
+          border-radius:50%; animation: spin 0.8s linear infinite; vertical-align:-2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .cam-row { background: #12141a; border: 1px solid #2a2d33; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .cam-row .grid2 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+
+  /* ---- recordings: cloud sync + DVR calendar/timeline ---- */
+  .cloud-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+               margin: 6px 0 14px; padding: 10px 12px; background: #12141a; border: 1px solid #2a2d33; border-radius: 8px; }
+  .rec-cams { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .rec-cams button.active { background: #2a72c9; color: #fff; }
+  .rec-layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .rec-cal { flex: 0 0 300px; background: #1c1f26; border-radius: 10px; padding: 12px; }
+  .rec-main { flex: 1 1 380px; min-width: 0; }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cal-title { font-weight: 600; }
+  .cal-nav { padding: 4px 12px; }
+  .cal-wd { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+  .cal-wd span { text-align: center; color: #777; font-size: 11px; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+  .cal-cell { position: relative; aspect-ratio: 1 / 1; display: grid; place-items: center; border: 0;
+              background: none; color: #666; border-radius: 8px; font-size: 13px; padding: 0; cursor: default; }
+  .cal-cell.has { background: #12141a; color: #e8e8e8; cursor: pointer; }
+  .cal-cell.has:hover { background: #20242c; }
+  .cal-cell.today { box-shadow: inset 0 0 0 1px #6cb2ff; }
+  .cal-cell.sel { background: #2a72c9; color: #fff; }
+  .cal-dot { position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: #6cb2ff; }
+  .cal-cell.sel .cal-dot { background: #fff; }
+  .tl-title { color: #aaa; font-size: 13px; margin-bottom: 6px; }
+  .tl-track { position: relative; height: 40px; background: #12141a; border: 1px solid #2a2d33; border-radius: 8px; overflow: hidden; }
+  .tl-block { position: absolute; top: 6px; bottom: 6px; min-width: 5px; border: 0; padding: 0; border-radius: 3px; opacity: 0.9; cursor: pointer; }
+  .tl-block:hover { opacity: 1; box-shadow: 0 0 0 2px #fff; }
+  .tl-now { position: absolute; top: 0; bottom: 0; width: 2px; background: #e74c3c; }
+  .tl-axis { position: relative; height: 16px; margin-top: 3px; }
+  .tl-tick { position: absolute; transform: translateX(-50%); color: #777; font-size: 10px; }
+  .tl-tick:first-child { transform: none; }
+  .tl-tick:last-child { transform: translateX(-100%); }
+  .rec-player:not(:empty) { margin: 12px 0; }
+  .rec-player-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 14px; }
+  .rec-player video { width: 100%; border-radius: 8px; background: #000; display: block; }
+  .rec-clip { display: flex; align-items: center; gap: 10px; background: #12141a; border: 1px solid #2a2d33;
+              border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
+  .rec-clip .rc-play { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 8px; display: grid;
+                       place-items: center; background: #1c1f26; cursor: pointer; }
+  .rec-clip .rc-play:hover { background: #262b34; }
+  .rec-clip .rc-meta { flex: 1 1 auto; min-width: 0; }
+  .rec-clip .rc-time { font-weight: 600; }
+  .rec-clip .rc-sub { font-size: 12px; color: #888; margin-top: 2px; }
+  .rec-clip .rc-right { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📷 Cameras</h1>
+
+  <nav class="tabs" id="tabs">
+    <button type="button" data-view="cameras" class="active">📹 Cameras</button>
+    <button type="button" data-view="recordings">🎬 Recordings</button>
+    <button type="button" data-view="settings">⚙️ Settings</button>
+  </nav>
+
+  <section class="view active" id="view-cameras">
+    <div class="bar">
+      <button id="btnAuto" onclick="toggleAuto()">🤖 Auto-record: …</button>
+    </div>
+
+    <div id="camGrid" class="cams-grid"></div>
+    <div id="noCameras" class="status" style="display:none">No cameras configured yet — open the "⚙️ Settings" tab.</div>
+  </section>
+
+  <section class="view" id="view-settings">
+
+    <h3>Find cameras on the network</h3>
+    <div class="bar" style="margin-top:4px">
+      <button id="btnScan" onclick="startScan()">🔍 Find cameras on the network</button>
+      <span class="status" id="scanMsg"></span>
+    </div>
+    <div id="scanResults"></div>
+
+    <h3>My cameras</h3>
+    <div id="camList"></div>
+    <div class="cam-row">
+      <div class="grid2">
+        <div><label>Name</label><input id="newCamName" placeholder="Camera 2"></div>
+        <div><label>Address (RTSP / HTTP / webcam number)</label>
+          <input id="newCamSource" placeholder="rtsp://username:password@192.168.1.65:554/..."></div>
+      </div>
+      <div class="bar">
+        <button class="small" onclick="testNewCam()">🔌 Test</button>
+        <button class="small on" onclick="addCam()">➕ Add camera</button>
+        <span class="status" id="newCamMsg"></span>
+      </div>
+    </div>
+    <div class="hint">
+      Hikvision: rtsp://user:pass@IP:554/Streaming/Channels/101 &nbsp;•&nbsp;
+      Dahua/Imou: rtsp://user:pass@IP:554/cam/realmonitor?channel=1&amp;subtype=0 &nbsp;•&nbsp;
+      TP-Link Tapo: rtsp://user:pass@IP:554/stream1 &nbsp;•&nbsp;
+      Xiaomi/other ONVIF: port 554, see the path in the camera's app
+    </div>
+
+    <h3>🔧 Change camera IP address (XMEye / Sofia / Besder)</h3>
+    <div class="cam-row" id="dvripBox">
+      <div class="hint" style="margin-bottom:6px">
+        For cheap DVR/NVR and IP cameras running Xiongmai firmware (XMEye, iCSee, Besder…),
+        which ship with a fixed default address like <b>192.168.1.10</b>.
+        Your computer must be on the same subnet as the camera right now.
+      </div>
+      <div class="grid">
+        <div><label>Current camera IP</label><input id="dvripIp" placeholder="192.168.1.10"></div>
+        <div><label>Port</label><input id="dvripPort" value="34567"></div>
+        <div><label>Username</label><input id="dvripUser" value="admin"></div>
+        <div><label>Password</label><input id="dvripPass" type="password" placeholder="empty by default"></div>
+      </div>
+      <div class="bar" style="margin-top:8px">
+        <button class="small" onclick="dvripRead()">📖 Read settings</button>
+        <span class="status" id="dvripReadMsg"></span>
+      </div>
+      <div class="grid">
+        <div><label>New IP</label><input id="dvripNewIp" placeholder="192.168.0.10"></div>
+        <div><label>Mask</label><input id="dvripNewMask" value="255.255.255.0"></div>
+        <div><label>Gateway (optional)</label><input id="dvripNewGw" placeholder="auto: .1 of the subnet"></div>
+      </div>
+      <div class="bar" style="margin-top:8px">
+        <button class="small on" onclick="dvripSetIp()">✅ Apply new IP</button>
+        <span class="status" id="dvripSetMsg"></span>
+      </div>
+
+      <hr style="border:0;border-top:1px solid #2a2d33;margin:14px 0">
+      <div class="grid2">
+        <div>
+          <label>On-screen video caption (channel name)</label>
+          <input id="dvripTitle" placeholder="leave empty to remove &quot;AI CAM&quot;">
+          <div class="hint">Empty = remove the caption from the stream and recordings. You can enter your own name.</div>
+        </div>
+        <div style="align-self:end">
+          <div class="bar" style="margin:0">
+            <button class="small" onclick="dvripSetTitle()">🏷 Apply caption</button>
+            <span class="status" id="dvripTitleMsg"></span>
+          </div>
+        </div>
+      </div>
+
+      <hr style="border:0;border-top:1px solid #2a2d33;margin:14px 0">
+      <div>
+        <label>Camera time <span id="dvripCamTime" class="status"></span></label>
+        <div class="bar" style="margin-top:2px">
+          <button class="small on" onclick="dvripSyncTime()">🖥 Sync with this device</button>
+          <input id="dvripTime" type="datetime-local" step="1" style="width:auto">
+          <button class="small" onclick="dvripSetManualTime()">🕒 Set manually</button>
+          <span class="status" id="dvripTimeMsg"></span>
+        </div>
+        <div class="hint">The current camera time is shown after "📖 Read settings".</div>
+      </div>
+    </div>
+
+    <h3>Detection (shared settings for all cameras)</h3>
+    <div class="grid">
+      <div><label>What to detect (comma-separated)</label>
+        <input id="detect_classes" placeholder="person, car, dog"></div>
+      <div><label>Confidence threshold (0–1)</label>
+        <input id="confidence" type="number" step="0.05" min="0.1" max="0.95"></div>
+      <div><label>Seconds before the event</label>
+        <input id="pre_seconds" type="number" min="0" max="30"></div>
+      <div><label>Seconds after the event</label>
+        <input id="post_seconds" type="number" min="3" max="120"></div>
+      <div><label>Run YOLO only on motion</label>
+        <select id="detect_on_motion">
+          <option value="true">On (recommended — saves CPU)</option>
+          <option value="false">Off (always run YOLO)</option>
+        </select></div>
+      <div><label>Motion threshold (% of frame)</label>
+        <input id="motion_threshold" type="number" step="0.1" min="0.1" max="20"></div>
+      <div><label>Record only moving objects</label>
+        <select id="require_object_motion">
+          <option value="true">On (recommended — ignore parked cars)</option>
+          <option value="false">Off (record whenever an object is seen)</option>
+        </select></div>
+      <div><label>Object motion threshold (% of box)</label>
+        <input id="object_motion_threshold" type="number" step="0.5" min="0.5" max="50"></div>
+      <div><label>Sustained motion before recording (passes)</label>
+        <input id="trigger_min_passes" type="number" min="1" max="10" step="1"></div>
+    </div>
+    <div class="hint">Classes are in English, from the COCO set: person, car, truck, bus, bicycle, motorcycle, cat, dog, bird…</div>
+    <div class="hint">Motion gating: a cheap frame-difference check runs first, and YOLO fires only when something moves — so static objects aren't boxed and idle cameras cost almost no CPU. Lower threshold = more sensitive.</div>
+    <div class="hint">Record only moving objects: a parked car is still detected/boxed on the live view but won't start a recording — only an object with movement inside its box does (car driving past, person walking). Movement is measured relative to the whole frame, so rain, snow and night-time sensor flicker (which change the whole picture at once) don't trigger recording. Raise the box % if slight camera noise still triggers it.</div>
+    <div class="hint">Sustained motion before recording: the moving object must be seen for this many detection passes in a row (each ≈ the detect interval) before a recording starts — so a momentary rain streak, bug or IR flicker that clips an object for a single frame is ignored, while a real object keeps moving. The pre-buffer still backfills the seconds before, so nothing is lost. Set to 1 to record on the very first frame of motion; raise it if rain still triggers.</div>
+    <div class="bar"><button onclick="saveConfig()">💾 Save</button><span id="saveMsg" class="status"></span></div>
+  </section>
+
+  <section class="view" id="view-recordings">
+    <div class="cloud-bar">
+      <button id="btnSync" class="small" onclick="syncToCloud()">☁️ Sync to cloud</button>
+      <span id="syncStatus" class="status"></span>
+    </div>
+    <div id="recCams" class="rec-cams"></div>
+    <div class="rec-layout">
+      <div id="recCalendar" class="rec-cal"></div>
+      <div class="rec-main">
+        <div id="recTimeline"></div>
+        <div id="recList"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+let autoRec = true;
+let mediaInfo = {available: false, running: false, view_mode: 'mjpeg', api_port: 1984};
+const tiles = {};          // cam_id -> {root, img, overlay, dot, connText, dets, recBtn}
+const manualState = {};    // cam_id -> bool
+
+function useWebrtc() {
+  return mediaInfo.view_mode === 'webrtc' && mediaInfo.available && mediaInfo.running;
+}
+// go2rtc runs on the same host as this app, on its own port
+function webrtcSrc(camId) {
+  return `//${location.hostname}:${mediaInfo.api_port}/stream.html?src=${camId}&mode=webrtc`;
+}
+
+async function api(url, body, method) {
+  const opts = {};
+  if (body !== undefined) {
+    opts.method = method || 'POST';
+    opts.headers = {'Content-Type': 'application/json'};
+    opts.body = JSON.stringify(body);
+  } else if (method) {
+    opts.method = method;
+  }
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+async function toggleAuto() {
+  autoRec = !autoRec;
+  await api('/api/auto', {on: autoRec});
+  renderAutoBtn();
+}
+function renderAutoBtn() {
+  const b = document.getElementById('btnAuto');
+  b.textContent = '🤖 Auto-record: ' + (autoRec ? 'on' : 'off');
+  b.className = autoRec ? 'on' : '';
+}
+
+function makeTile(cam) {
+  const root = document.createElement('div');
+  root.className = 'cam-tile';
+  const player = useWebrtc()
+    ? `<iframe src="${webrtcSrc(cam.id)}" allow="autoplay" frameborder="0"
+              style="width:100%;height:100%;border:0;background:#000"></iframe>`
+    : `<img src="/stream/${cam.id}?t=${Date.now()}" alt="">`;
+  root.innerHTML = `
+    <div class="video-box">
+      ${player}
+      <div class="overlay">Connecting…</div>
+    </div>
+    <div class="cam-info">
+      <span><span class="dot"></span><b class="cam-name"></b> <span class="conn-text status"></span></span>
+      <button class="rec-btn small">⏺ Start recording</button>
+    </div>
+    <div class="cam-info" style="padding-top:0"><span class="dets"></span></div>
+  `;
+  document.getElementById('camGrid').appendChild(root);
+  const t = {
+    root,
+    img: root.querySelector('img'),
+    overlay: root.querySelector('.overlay'),
+    dot: root.querySelector('.dot'),
+    name: root.querySelector('.cam-name'),
+    connText: root.querySelector('.conn-text'),
+    dets: root.querySelector('.dets'),
+    recBtn: root.querySelector('.rec-btn'),
+  };
+  t.recBtn.onclick = async () => {
+    const next = !manualState[cam.id];
+    manualState[cam.id] = next;
+    updateRecBtn(t, next);
+    await api(`/api/record/${cam.id}`, {on: next});
+  };
+  tiles[cam.id] = t;
+  return t;
+}
+
+function updateRecBtn(t, on) {
+  t.recBtn.textContent = on ? '⏹ Stop recording' : '⏺ Start recording';
+  t.recBtn.className = 'rec-btn small' + (on ? ' rec' : '');
+}
+
+function updateTile(t, st) {
+  t.name.textContent = st.name;
+  if (st.recording) { t.dot.className = 'dot rec'; t.connText.textContent = 'recording'; }
+  else if (st.connected) { t.dot.className = 'dot ok'; t.connText.textContent = st.motion ? 'connected · motion' : 'connected'; }
+  else { t.dot.className = 'dot'; t.connText.textContent = st.error || 'no connection'; }
+  t.overlay.style.display = st.connected ? 'none' : 'flex';
+  t.overlay.textContent = st.source_set ? (st.error || 'Connecting…') : 'Address not configured';
+  t.dets.textContent = st.detections.length
+    ? '👁 ' + st.detections.map(d => `${d.label} ${Math.round(d.conf*100)}%`).join(', ') : '';
+  manualState[st.id] = st.manual_record;
+  updateRecBtn(t, st.manual_record);
+}
+
+async function poll() {
+  try {
+    const statuses = await api('/api/status');
+    document.getElementById('noCameras').style.display = statuses.length ? 'none' : 'block';
+    const seen = new Set();
+    for (const st of statuses) {
+      seen.add(st.id);
+      if (!tiles[st.id]) makeTile(st);
+      updateTile(tiles[st.id], st);
+    }
+    for (const id of Object.keys(tiles)) {
+      if (!seen.has(id)) { tiles[id].root.remove(); delete tiles[id]; delete manualState[id]; }
+    }
+  } catch (e) {}
+}
+
+async function loadMediaInfo() {
+  try { mediaInfo = await api('/api/media_info'); } catch (e) {}
+}
+
+async function loadConfig() {
+  const c = await api('/api/config');
+  autoRec = c.auto_record; renderAutoBtn();
+  document.getElementById('detect_classes').value = c.detect_classes.join(', ');
+  document.getElementById('confidence').value = c.confidence;
+  document.getElementById('pre_seconds').value = c.pre_seconds;
+  document.getElementById('post_seconds').value = c.post_seconds;
+  document.getElementById('detect_on_motion').value = c.detect_on_motion ? 'true' : 'false';
+  document.getElementById('motion_threshold').value = c.motion_threshold;
+  document.getElementById('require_object_motion').value = c.require_object_motion ? 'true' : 'false';
+  document.getElementById('object_motion_threshold').value = c.object_motion_threshold;
+  document.getElementById('trigger_min_passes').value = c.trigger_min_passes;
+}
+
+async function saveConfig() {
+  await api('/api/config', {
+    detect_classes: document.getElementById('detect_classes').value,
+    confidence: parseFloat(document.getElementById('confidence').value),
+    pre_seconds: parseInt(document.getElementById('pre_seconds').value),
+    post_seconds: parseInt(document.getElementById('post_seconds').value),
+    detect_on_motion: document.getElementById('detect_on_motion').value === 'true',
+    motion_threshold: parseFloat(document.getElementById('motion_threshold').value),
+    require_object_motion: document.getElementById('require_object_motion').value === 'true',
+    object_motion_threshold: parseFloat(document.getElementById('object_motion_threshold').value),
+    trigger_min_passes: parseInt(document.getElementById('trigger_min_passes').value),
+  });
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = 'Saved ✓';
+  setTimeout(() => msg.textContent = '', 2000);
+}
+
+async function testSourceValue(source, msgEl) {
+  if (!source) { msgEl.textContent = 'Enter an address first'; return; }
+  msgEl.innerHTML = '<span class="spin"></span> testing…';
+  try {
+    const r = await api('/api/test_source', {source});
+    if (r.ok) {
+      msgEl.textContent = `✓ Works — ${r.width}×${r.height}` + (r.fps ? `, ${r.fps} fps` : '');
+      msgEl.style.color = '#27ae60';
+    } else {
+      msgEl.textContent = '✗ ' + r.error;
+      msgEl.style.color = '#e74c3c';
+    }
+  } catch (e) {
+    msgEl.textContent = '✗ Test failed'; msgEl.style.color = '#e74c3c';
+  }
+}
+
+function testNewCam() {
+  testSourceValue(document.getElementById('newCamSource').value.trim(), document.getElementById('newCamMsg'));
+}
+
+async function addCam() {
+  const name = document.getElementById('newCamName').value.trim();
+  const source = document.getElementById('newCamSource').value.trim();
+  const msg = document.getElementById('newCamMsg');
+  if (!source) { msg.textContent = 'Enter the camera address'; return; }
+  const r = await api('/api/cameras', {name, source});
+  if (r.error) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+  document.getElementById('newCamName').value = '';
+  document.getElementById('newCamSource').value = '';
+  msg.textContent = '✓ Camera added'; msg.style.color = '#27ae60';
+  loadCamList(); poll();
+}
+
+function dvripCreds() {
+  return {
+    ip: document.getElementById('dvripIp').value.trim(),
+    port: parseInt(document.getElementById('dvripPort').value) || 34567,
+    user: document.getElementById('dvripUser').value.trim() || 'admin',
+    password: document.getElementById('dvripPass').value,
+  };
+}
+
+async function dvripRead() {
+  const msg = document.getElementById('dvripReadMsg');
+  const creds = dvripCreds();
+  if (!creds.ip) { msg.textContent = 'Enter the current camera IP'; msg.style.color = '#e74c3c'; return; }
+  msg.innerHTML = '<span class="spin"></span> connecting…'; msg.style.color = '';
+  try {
+    const r = await api('/api/dvrip/config', creds);
+    if (!r.ok) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+    msg.textContent = `✓ IP ${r.ip} • mask ${r.mask} • gateway ${r.gateway}` + (r.mac ? ` • MAC ${r.mac}` : '');
+    msg.style.color = '#27ae60';
+    // fill the new-address fields with the current values as a starting point
+    if (!document.getElementById('dvripNewIp').value) document.getElementById('dvripNewIp').value = r.ip;
+    if (r.mask) document.getElementById('dvripNewMask').value = r.mask;
+    // also read the camera time
+    try {
+      const t = await api('/api/dvrip/time', creds);
+      if (t.ok && t.camera_time) {
+        document.getElementById('dvripCamTime').textContent = '— now ' + t.camera_time;
+        document.getElementById('dvripTime').value = t.camera_time.replace(' ', 'T');
+      }
+    } catch (e) {}
+  } catch (e) {
+    msg.textContent = '✗ Request failed'; msg.style.color = '#e74c3c';
+  }
+}
+
+async function dvripSetIp() {
+  const msg = document.getElementById('dvripSetMsg');
+  const creds = dvripCreds();
+  const newIp = document.getElementById('dvripNewIp').value.trim();
+  if (!creds.ip) { msg.textContent = 'Enter the current camera IP'; msg.style.color = '#e74c3c'; return; }
+  if (!newIp) { msg.textContent = 'Enter the new IP'; msg.style.color = '#e74c3c'; return; }
+  if (!confirm(`Change the camera IP from ${creds.ip} to ${newIp}?\nAfter the change the camera will be reachable at the new address — you may need to move your computer back onto its subnet.`)) return;
+  msg.innerHTML = '<span class="spin"></span> applying…'; msg.style.color = '';
+  try {
+    const r = await api('/api/dvrip/set_ip', {
+      ...creds,
+      new_ip: newIp,
+      new_mask: document.getElementById('dvripNewMask').value.trim(),
+      new_gateway: document.getElementById('dvripNewGw').value.trim(),
+    });
+    if (!r.ok) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+    msg.innerHTML = `✓ Done. The camera is now at <b>${r.new_ip}</b> (mask ${r.new_mask}, gateway ${r.new_gateway}). ` +
+                    `Update the camera's RTSP address in the list if it's already added.`;
+    msg.style.color = '#27ae60';
+    document.getElementById('dvripIp').value = r.new_ip;
+  } catch (e) {
+    msg.textContent = '✗ Request failed'; msg.style.color = '#e74c3c';
+  }
+}
+
+async function dvripSetTitle() {
+  const msg = document.getElementById('dvripTitleMsg');
+  const creds = dvripCreds();
+  if (!creds.ip) { msg.textContent = 'Enter the camera IP'; msg.style.color = '#e74c3c'; return; }
+  const text = document.getElementById('dvripTitle').value.trim();
+  msg.innerHTML = '<span class="spin"></span> applying…'; msg.style.color = '';
+  try {
+    const r = await api('/api/dvrip/osd_title', {...creds, text});
+    if (!r.ok) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+    msg.textContent = text ? `✓ Caption "${text}" shown` : '✓ Caption removed';
+    msg.style.color = '#27ae60';
+  } catch (e) {
+    msg.textContent = '✗ Request failed'; msg.style.color = '#e74c3c';
+  }
+}
+
+// local time in the format the camera understands: YYYY-MM-DD HH:MM:SS
+function fmtLocal(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+async function dvripApplyTime(timeStr, label) {
+  const msg = document.getElementById('dvripTimeMsg');
+  const creds = dvripCreds();
+  if (!creds.ip) { msg.textContent = 'Enter the camera IP'; msg.style.color = '#e74c3c'; return; }
+  msg.innerHTML = '<span class="spin"></span> ' + label + '…'; msg.style.color = '';
+  try {
+    const r = await api('/api/dvrip/time', {...creds, time: timeStr});
+    if (!r.ok) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+    msg.textContent = '✓ Set' + (r.camera_time ? ` — on the camera ${r.camera_time}` : '');
+    msg.style.color = '#27ae60';
+    if (r.camera_time) document.getElementById('dvripCamTime').textContent = '— now ' + r.camera_time;
+  } catch (e) {
+    msg.textContent = '✗ Request failed'; msg.style.color = '#e74c3c';
+  }
+}
+
+function dvripSyncTime() { dvripApplyTime(fmtLocal(new Date()), 'syncing'); }
+
+function dvripSetManualTime() {
+  const v = document.getElementById('dvripTime').value;  // 'YYYY-MM-DDTHH:MM[:SS]'
+  if (!v) { const m = document.getElementById('dvripTimeMsg'); m.textContent = 'Pick a date and time'; m.style.color = '#e74c3c'; return; }
+  const parts = v.replace('T', ' ');
+  dvripApplyTime(parts.length === 16 ? parts + ':00' : parts, 'setting');
+}
+
+async function loadCamList() {
+  const cams = await api('/api/cameras');
+  const box = document.getElementById('camList');
+  box.innerHTML = '';
+  for (const c of cams) {
+    const row = document.createElement('div');
+    row.className = 'cam-row';
+    row.innerHTML = `
+      <div class="grid2">
+        <div><label>Name</label><input class="f-name" value="${c.name.replace(/"/g, '&quot;')}"></div>
+        <div><label>Address</label><input class="f-source" value="${c.source.replace(/"/g, '&quot;')}"></div>
+      </div>
+      <div class="bar">
+        <button class="small" data-act="test">🔌 Test</button>
+        <button class="small" data-act="save">💾 Save</button>
+        <button class="small danger" data-act="del">🗑 Delete</button>
+        <span class="status msg"></span>
+      </div>
+    `;
+    const nameInput = row.querySelector('.f-name');
+    const sourceInput = row.querySelector('.f-source');
+    const msg = row.querySelector('.msg');
+    row.querySelector('[data-act="test"]').onclick = () => testSourceValue(sourceInput.value.trim(), msg);
+    row.querySelector('[data-act="save"]').onclick = async () => {
+      await api(`/api/cameras/${c.id}`, {name: nameInput.value.trim(), source: sourceInput.value.trim()});
+      msg.textContent = 'Saved ✓'; msg.style.color = '#27ae60';
+      poll();
+    };
+    row.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm(`Delete camera "${c.name}"? The recordings will remain on disk.`)) return;
+      await api(`/api/cameras/${c.id}`, undefined, 'DELETE');
+      loadCamList(); poll();
+    };
+    box.appendChild(row);
+  }
+}
+
+// ---------- recordings: DVR-style calendar + 24h timeline ----------
+const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const TAG_COLOR = { person: '#6cb2ff', car: '#e3883e', truck: '#d97706', bus: '#d97706',
+  motorcycle: '#e3883e', bicycle: '#e3883e', dog: '#27ae60', cat: '#27ae60', bird: '#2ea043' };
+const clipColor = (c) => { for (const t of (c.tags || [])) if (TAG_COLOR[t]) return TAG_COLOR[t]; return '#7d8590'; };
+const WD_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const pad2 = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const todayStr = () => ymd(new Date());
+const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return ymd(d); };
+const secOfDay = (iso) => { const t = (iso.split('T')[1] || '0:0:0').split(':'); return (+t[0]) * 3600 + (+t[1]) * 60 + (+t[2] || 0); };
+const hmsOf = (iso) => (iso.split('T')[1] || '').slice(0, 8);
+const secNow = () => { const d = new Date(); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds(); };
+function fmtDur(s) { s = Math.round(s || 0); return s <= 0 ? '' : (s < 60 ? s + ' s' : Math.floor(s / 60) + ':' + pad2(s % 60)); }
+function dayTitleEn(ds) {
+  if (ds === todayStr()) return 'Today';
+  if (ds === yesterdayStr()) return 'Yesterday';
+  return new Date(ds + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+const rec = { clips: [], days: {}, cam: '', day: '', calMonth: null, playerOpen: false, openKey: '' };
+
+async function loadRecordings() {
+  if (rec.playerOpen) return;   // don't disrupt an open player with the periodic refresh
+  let files = [];
+  try { files = await api('/api/recordings'); } catch (e) { return; }
+  rec.clips = files;
+  if (rec.cam && !files.some((f) => f.cam_id === rec.cam)) rec.cam = '';
+  renderRecCams();
+  pickDay();
+  renderRecCalendar();
+  renderRecTimeline();
+  renderRecList();
+}
+
+const filteredClips = () => rec.clips.filter((c) => !rec.cam || c.cam_id === rec.cam);
+const dayOf = (c) => (c.started_iso || '').slice(0, 10);
+function dayClips() {
+  return filteredClips().filter((c) => dayOf(c) === rec.day).sort((a, b) => a.started - b.started);
+}
+
+function pickDay() {
+  const days = {};
+  for (const c of filteredClips()) { const d = dayOf(c); if (d) days[d] = (days[d] || 0) + 1; }
+  rec.days = days;
+  const sorted = Object.keys(days).sort();
+  if (!rec.day || !days[rec.day]) rec.day = sorted.length ? sorted[sorted.length - 1] : todayStr();
+  rec.calMonth = new Date(rec.day + 'T00:00:00'); rec.calMonth.setDate(1);
+}
+
+function renderRecCams() {
+  const el = document.getElementById('recCams'); if (!el) return;
+  const ids = [...new Set(rec.clips.map((c) => c.cam_id))];
+  const cams = ids.map((id) => ({ id, name: (rec.clips.find((c) => c.cam_id === id) || {}).cam_name || id }));
+  el.innerHTML = `<button class="small ${rec.cam ? '' : 'active'}" data-cam="">All cameras</button>` +
+    cams.map((c) => `<button class="small ${rec.cam === c.id ? 'active' : ''}" data-cam="${escHtml(c.id)}">${escHtml(c.name)}</button>`).join('');
+  el.querySelectorAll('button').forEach((b) => b.onclick = () => {
+    rec.cam = b.dataset.cam; closePlayer(); pickDay();
+    renderRecCams(); renderRecCalendar(); renderRecTimeline(); renderRecList();
+  });
+}
+
+function renderRecCalendar() {
+  const el = document.getElementById('recCalendar'); if (!el) return;
+  const m = rec.calMonth || new Date(), year = m.getFullYear(), month = m.getMonth();
+  const startWd = (new Date(year, month, 1).getDay() + 6) % 7;   // Monday-first
+  const nDays = new Date(year, month + 1, 0).getDate();
+  const title = m.toLocaleDateString('en-GB', { month: 'long' }) + ' ' + year;
+  let cells = '';
+  for (let i = 0; i < startWd; i++) cells += `<span class="cal-cell"></span>`;
+  for (let d = 1; d <= nDays; d++) {
+    const ds = `${year}-${pad2(month + 1)}-${pad2(d)}`;
+    const has = rec.days[ds], cls = ['cal-cell'];
+    if (has) cls.push('has');
+    if (ds === rec.day) cls.push('sel');
+    if (ds === todayStr()) cls.push('today');
+    cells += `<button class="${cls.join(' ')}" ${has ? `data-day="${ds}"` : 'disabled'}>${d}${has ? '<i class="cal-dot"></i>' : ''}</button>`;
+  }
+  el.innerHTML = `
+    <div class="cal-head">
+      <button class="cal-nav small" data-nav="-1">‹</button>
+      <span class="cal-title">${escHtml(title)}</span>
+      <button class="cal-nav small" data-nav="1">›</button>
+    </div>
+    <div class="cal-wd">${WD_EN.map((w) => `<span>${w}</span>`).join('')}</div>
+    <div class="cal-grid">${cells}</div>`;
+  el.querySelector('[data-nav="-1"]').onclick = () => { rec.calMonth = new Date(year, month - 1, 1); renderRecCalendar(); };
+  el.querySelector('[data-nav="1"]').onclick = () => { rec.calMonth = new Date(year, month + 1, 1); renderRecCalendar(); };
+  el.querySelectorAll('.cal-cell.has').forEach((b) => b.onclick = () => {
+    rec.day = b.dataset.day; closePlayer(); renderRecCalendar(); renderRecTimeline(); renderRecList();
+  });
+}
+
+function renderRecTimeline() {
+  const el = document.getElementById('recTimeline'); if (!el) return;
+  const clips = dayClips();
+  const ticks = [0, 3, 6, 9, 12, 15, 18, 21, 24].map((h) =>
+    `<span class="tl-tick" style="left:${h / 24 * 100}%">${h}</span>`).join('');
+  const blocks = clips.map((c) => {
+    const left = secOfDay(c.started_iso) / 864, w = Math.max(0.3, (c.duration || 0) / 864);
+    return `<button class="tl-block" data-cam="${escHtml(c.cam_id)}" data-name="${escHtml(c.name)}"
+             title="${hmsOf(c.started_iso)} · ${escHtml((c.tags || []).join(', ') || 'clip')}"
+             style="left:${left}%;width:${w}%;background:${clipColor(c)}"></button>`;
+  }).join('');
+  const now = rec.day === todayStr() ? `<span class="tl-now" style="left:${secNow() / 864}%"></span>` : '';
+  el.innerHTML = `
+    <div class="tl-title">${escHtml(dayTitleEn(rec.day))} · ${clips.length} ${clips.length === 1 ? 'clip' : 'clips'}</div>
+    <div class="tl-track">${blocks}${now}</div>
+    <div class="tl-axis">${ticks}</div>`;
+  el.querySelectorAll('.tl-block').forEach((b) => b.onclick = () => {
+    const c = clips.find((x) => x.cam_id === b.dataset.cam && x.name === b.dataset.name);
+    if (c) playInline(c);
+  });
+}
+
+function renderRecList() {
+  const el = document.getElementById('recList'); if (!el) return;
+  const clips = dayClips().slice().reverse();   // newest first
+  if (!clips.length) { el.innerHTML = `<div class="status" style="padding:10px 2px">No recordings this day</div>`; return; }
+  el.innerHTML = clips.map((c) => {
+    const tags = (c.tags || []).map((t) => `<span class="rec-tag">${escHtml(t)}</span>`).join('');
+    const dur = fmtDur(c.duration);
+    return `
+      <div class="rec-clip" data-cam="${escHtml(c.cam_id)}" data-name="${escHtml(c.name)}">
+        <div class="rc-play" data-cam="${escHtml(c.cam_id)}" data-name="${escHtml(c.name)}" style="color:${clipColor(c)}" title="Play">▶</div>
+        <div class="rc-meta">
+          <div class="rc-time">${hmsOf(c.started_iso)}${dur ? ` · ${dur}` : ''}</div>
+          <div class="rc-sub">${escHtml(c.cam_name)}${tags ? ' · ' + tags : ''}</div>
+        </div>
+        <div class="rc-right">
+          <span class="status">${c.size_mb} MB</span>
+          <button class="del" data-cam="${escHtml(c.cam_id)}" data-name="${escHtml(c.name)}">✕ delete</button>
+        </div>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('.rc-play').forEach((b) => b.onclick = () => {
+    const c = clips.find((x) => x.cam_id === b.dataset.cam && x.name === b.dataset.name);
+    if (c) playInline(c);
+  });
+  el.querySelectorAll('.del').forEach((b) => b.onclick = () => deleteClip(b.dataset.cam, b.dataset.name));
+}
+
+function playInline(c) {
+  const key = `${c.cam_id}|${c.name}`;
+  if (rec.openKey === key) { closePlayer(); return; }   // click the same clip again to close
+  closePlayer();
+  // open the player right below the clip's own row, not up at the top of the list
+  let row = null;
+  document.querySelectorAll('#recList .rec-clip').forEach((r) => {
+    if (r.dataset.cam === c.cam_id && r.dataset.name === c.name) row = r;
+  });
+  if (!row) return;
+  const src = `/recordings/${c.cam_id}/${encodeURIComponent(c.name)}`;
+  const player = document.createElement('div');
+  player.className = 'rec-player';
+  player.id = 'recInlinePlayer';
+  player.innerHTML = `
+    <div class="rec-player-bar"><b>${escHtml(c.cam_name)}</b> · ${hmsOf(c.started_iso)}
+      <a class="small" href="${src}" download style="margin-left:auto;text-decoration:none;padding:6px 12px;background:#2a2f3a;border-radius:8px">⬇ Download</a>
+      <button class="small" onclick="closePlayer()">✕ Close</button></div>
+    <video src="${src}" controls autoplay playsinline preload="metadata"></video>`;
+  row.insertAdjacentElement('afterend', player);
+  rec.playerOpen = true;
+  rec.openKey = key;
+  player.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closePlayer() {
+  const el = document.getElementById('recInlinePlayer');
+  if (el) el.remove();
+  rec.playerOpen = false;
+  rec.openKey = '';
+}
+
+async function deleteClip(cam, name) {
+  if (!confirm('Delete this recording?')) return;
+  await fetch(`/api/recordings/${cam}/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  closePlayer();
+  loadRecordings();
+}
+
+// ---------- cloud sync ----------
+async function loadUploadStatus() {
+  try { renderUploadStatus(await api('/api/upload/status')); } catch (e) {}
+}
+
+function renderUploadStatus(st) {
+  const el = document.getElementById('syncStatus'); if (!el || !st) return;
+  const btn = document.getElementById('btnSync');
+  if (!st.configured) {
+    if (btn) btn.disabled = true;
+    el.textContent = 'Cloud sync off — set upload_url, upload_token and upload_enabled in config.json';
+    return;
+  }
+  if (btn && btn.textContent === '☁️ Sync to cloud') btn.disabled = false;
+  const parts = [st.enabled ? '✓ enabled' : 'configured (archiving off)', `uploaded ${st.uploaded_count}`];
+  if (st.pending) parts.push(`pending ${st.pending}`);
+  if (st.inflight) parts.push(`sending ${st.inflight.split('/').pop()}`);
+  if (st.last_upload_ts) parts.push('last ' + new Date(st.last_upload_ts * 1000).toLocaleTimeString());
+  if (st.last_error) parts.push('⚠ ' + st.last_error);
+  el.textContent = parts.join(' • ');
+}
+
+let syncPollTimer = null;
+async function syncToCloud() {
+  const btn = document.getElementById('btnSync');
+  btn.disabled = true; btn.textContent = '☁️ Syncing…';
+  try { renderUploadStatus((await api('/api/upload/backfill', {})).status); } catch (e) {}
+  // poll the status for a while so the user sees the queue drain
+  let n = 0;
+  clearInterval(syncPollTimer);
+  syncPollTimer = setInterval(async () => { await loadUploadStatus(); if (++n > 16) clearInterval(syncPollTimer); }, 2000);
+  setTimeout(() => { btn.textContent = '☁️ Sync to cloud'; btn.disabled = false; }, 1500);
+}
+
+let scanTimer = null;
+
+async function startScan() {
+  const btn = document.getElementById('btnScan');
+  btn.disabled = true;
+  document.getElementById('scanResults').innerHTML = '';
+  await api('/api/scan', {});
+  document.getElementById('scanMsg').innerHTML = '<span class="spin"></span> scanning the network…';
+  if (scanTimer) clearInterval(scanTimer);
+  scanTimer = setInterval(pollScan, 800);
+}
+
+async function pollScan() {
+  const st = await api('/api/scan');
+  const msg = document.getElementById('scanMsg');
+  if (st.running) {
+    msg.innerHTML = `<span class="spin"></span> scanning the network… ${Math.round(st.progress*100)}%`;
+  } else {
+    clearInterval(scanTimer); scanTimer = null;
+    document.getElementById('btnScan').disabled = false;
+    const cams = st.results.filter(r => r.likely_camera);
+    if (st.error) { msg.textContent = st.error; msg.style.color = ''; }
+    else if (st.auto_connected && st.auto_connected.length) {
+      msg.textContent = `✓ Cameras added automatically: ${st.auto_connected.length} (${st.auto_connected.map(a => a.name).join(', ')})`;
+      msg.style.color = '#27ae60';
+      loadCamList(); poll();
+    } else {
+      msg.style.color = '';
+      msg.textContent = cams.length ? `Cameras found: ${cams.length}` : 'No cameras found. Make sure the camera is on the same network.';
+    }
+  }
+  renderScan(st.results);
+}
+
+function renderScan(results) {
+  const box = document.getElementById('scanResults');
+  const cams = results.filter(r => r.likely_camera);
+  box.innerHTML = '';
+  for (const r of cams) {
+    const div = document.createElement('div');
+    div.className = 'cam';
+    const title = r.name || r.hardware || r.server || 'Camera';
+    let html = `<div><b>${r.ip}</b> — ${title}${r.onvif ? '<span class="tag">ONVIF</span>' : ''}` +
+               `${r.already_added ? '<span class="tag" style="background:#555">already added</span>' : ''}` +
+               `${(r.working_url && !r.already_added) ? '<span class="tag" style="background:#2a72c9">connection verified</span>' : ''}</div>`;
+    const meta = [];
+    if (r.ports && r.ports.length) meta.push('ports: ' + r.ports.join(', '));
+    if (r.server) meta.push(r.server);
+    if (r.mac) meta.push(r.mac);
+    if (r.working_size) meta.push(r.working_size);
+    if (meta.length) html += `<div class="meta">${meta.join(' • ')}</div>`;
+    div.innerHTML = html;
+
+    if (r.working_url && !r.already_added) {
+      const b = document.createElement('button');
+      b.className = 'on';
+      b.textContent = '➕ Add this camera';
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = 'Adding…';
+        const res = await api('/api/scan/connect', {ip: r.ip});
+        if (res.ok) {
+          b.textContent = '✓ Added';
+          loadCamList(); poll();
+        } else {
+          b.textContent = '➕ Add this camera'; b.disabled = false;
+          alert(res.error || 'Could not connect');
+        }
+      };
+      div.appendChild(b);
+    }
+
+    if (r.dvrip) {
+      const b = document.createElement('button');
+      b.className = 'sug';
+      b.style.background = '#3a2f1a';
+      b.textContent = '🔧 Change this camera\'s IP (XMEye/Sofia)';
+      b.onclick = () => {
+        document.getElementById('dvripIp').value = r.ip;
+        document.getElementById('dvripBox').scrollIntoView({behavior: 'smooth', block: 'center'});
+        document.getElementById('dvripPass').focus();
+      };
+      div.appendChild(b);
+    }
+
+    if (!r.already_added) {
+      for (const s of (r.suggestions || [])) {
+        const b = document.createElement('button');
+        b.className = 'sug';
+        b.textContent = s;
+        b.title = 'Copy into the new camera address field (enter your username and password instead of user:pass / YOUR_PASSWORD)';
+        b.onclick = () => {
+          document.getElementById('newCamSource').value = s;
+          document.getElementById('newCamSource').focus();
+        };
+        div.appendChild(b);
+      }
+      if (r.suggestions && r.suggestions.length) {
+        const hint = document.createElement('div');
+        hint.className = 'meta';
+        hint.textContent = r.working_url
+          ? '↑ other path options in case the main one stops working'
+          : '↑ click to fill the "Add camera" form below, then enter your username and password';
+        div.appendChild(hint);
+      }
+    }
+    box.appendChild(div);
+  }
+}
+
+async function initScanState() {
+  // the scan may have started on its own on the backend if there are no cameras yet
+  const st = await api('/api/scan');
+  if (st.running || (st.results && st.results.length)) {
+    document.getElementById('btnScan').disabled = st.running;
+    if (st.running) {
+      document.getElementById('scanMsg').innerHTML = '<span class="spin"></span> scanning the network…';
+      scanTimer = setInterval(pollScan, 800);
+    } else {
+      pollScan();
+    }
+  }
+}
+
+// ---------- top-level tabs (Cameras / Recordings / Settings) ----------
+function showTab(name) {
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
+}
+document.querySelectorAll('#tabs button').forEach((b) => b.onclick = () => showTab(b.dataset.view));
+
+loadMediaInfo().then(() => { poll(); });
+loadConfig(); loadCamList(); loadRecordings(); loadUploadStatus(); initScanState();
+setInterval(poll, 1500);
+setInterval(loadRecordings, 10000);   // self-guards: it skips re-rendering while a clip is playing
+setInterval(loadUploadStatus, 5000);
+</script>
+</body>
+</html>

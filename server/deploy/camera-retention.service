@@ -1,0 +1,10 @@
+[Unit]
+Description=Camera backend retention cleanup (delete old clips)
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/camera-server
+EnvironmentFile=/opt/camera-server/.env
+ExecStart=/opt/camera-server/venv/bin/python server.py retention

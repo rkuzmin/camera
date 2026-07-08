@@ -1,0 +1,5 @@
+Flask>=3.0
+gunicorn>=21.2
+# Web Push is added in the notifications phase (server.py imports it lazily):
+#   venv/bin/pip install pywebpush
+# pywebpush>=1.14
