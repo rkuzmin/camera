@@ -25,6 +25,9 @@ No dependencies beyond what ships with macOS (`bash`, `curl`, `pmset`,
 
 ## 2. Install
 
+The repo-root `./install.sh` installs this watchdog together with the camera
+app service and forwards all the flags below. Standalone:
+
 ```bash
 cd battery-monitor
 ./install.sh                # asks for the token and chat id
