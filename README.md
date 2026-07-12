@@ -241,3 +241,16 @@ retention timer (default 30 days).
 
 Server operations — deploy, logs, retention, VAPID keys — are documented in
 [`server/deploy/README.md`](server/deploy/README.md).
+
+## Power-outage / battery alerts to Telegram (macOS)
+
+An optional launchd service for the Mac that runs this app: it watches the
+power state and messages a Telegram bot when the machine switches to battery
+(likely a power outage — useful to know your cameras are about to go dark),
+when the battery runs low, and when power comes back.
+
+```bash
+cd battery-monitor && ./install.sh
+```
+
+See [`battery-monitor/README.md`](battery-monitor/README.md).
