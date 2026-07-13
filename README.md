@@ -40,9 +40,9 @@ run it only on networks you own.
 ./start.sh
 ```
 
-Or install it as an always-on launchd service (starts at login, restarts on
-crash, plus power-outage alerts to Telegram) — see
-[Run as a service](#run-as-a-service--power-alerts-to-telegram-macos).
+Or install it as an always-on service (macOS launchd / Linux systemd —
+autostart, restart on crash, plus power-outage alerts to Telegram) — see
+[Run as a service](#run-as-a-service--power-alerts-to-telegram-macos--linux).
 
 Open in your browser: **http://<IP-of-this-computer>:8080** — the page is
 accessible from any device on the local network, not only from this computer.
@@ -246,27 +246,32 @@ retention timer (default 30 days).
 Server operations — deploy, logs, retention, VAPID keys — are documented in
 [`server/deploy/README.md`](server/deploy/README.md).
 
-## Run as a service + power alerts to Telegram (macOS)
+## Run as a service + power alerts to Telegram (macOS / Linux)
 
-Instead of starting the app by hand, install it as a launchd service — it
-starts when you log in, restarts if it crashes, and comes with a watchdog
-that messages a Telegram bot when the Mac switches to battery power (likely
-a power outage — your cameras are about to go dark), when the battery runs
-low, and when power comes back:
+Instead of starting the app by hand, install it as a service — it starts on
+its own, restarts if it crashes, and comes with a watchdog that messages a
+Telegram bot when the machine switches to battery power (likely a power
+outage — your cameras are about to go dark), when the battery runs low, and
+when power comes back:
 
 ```bash
 ./install.sh          # asks for the bot token and chat id
 ```
 
-This sets up two per-user LaunchAgents: `local.camera-app` (the app itself,
-port 8080, log in `~/.local/state/camera-app/app.log`) and
-`local.battery-monitor` (the watchdog). The venv is created automatically if
-missing. Useful flags: `--app-only`, `--battery-only`, `--lang ru`,
-`--thresholds "20 10 5"`; see `./install.sh --help`. Remove everything with
-`./uninstall.sh` (`--purge` also drops the watchdog config and logs).
+- **macOS**: two per-user LaunchAgents — `local.camera-app` (the app, log in
+  `~/.local/state/camera-app/app.log`) and `local.battery-monitor`. They run
+  in your login session, so stay logged in (autologin works).
+- **Linux (Ubuntu etc.)**: systemd units — `camera-app.service` plus
+  `battery-monitor.service`/`.timer`. By default they are system-wide (the
+  script asks for sudo once) and run from boot, no login needed; app logs go
+  to `journalctl -u camera-app -f`. With `--user-service` you get user units
+  instead (then run `sudo loginctl enable-linger $USER` so they survive
+  logout). Battery state is read from `/sys/class/power_supply`.
+
+The venv is created automatically if missing. Useful flags: `--app-only`,
+`--battery-only`, `--lang ru`, `--thresholds "20 10 5"`; see
+`./install.sh --help`. Remove everything with `./uninstall.sh` (`--purge`
+also drops the watchdog config and logs).
 
 How to create the bot and get the token/chat id, watchdog details:
 [`battery-monitor/README.md`](battery-monitor/README.md).
-
-Both agents run in your login session, so stay logged in (autologin works)
-— which is the usual setup for a Mac that records cameras 24/7.

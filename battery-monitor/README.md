@@ -1,16 +1,17 @@
-# battery-monitor — power/battery alerts to Telegram (macOS)
+# battery-monitor — power/battery alerts to Telegram (macOS / Linux)
 
-A small launchd service for the Mac that runs the camera app: every minute it
-checks the power state with `pmset` and messages a Telegram bot when
+A small service for the machine that runs the camera app: every minute it
+checks the power state (`pmset` on macOS, `/sys/class/power_supply` on
+Linux) and messages a Telegram bot when
 
-- the Mac **switches to battery power** — for an always-plugged-in camera
-  machine this usually means a power outage;
+- the machine **switches to battery power** — for an always-plugged-in
+  camera machine this usually means a power outage;
 - the battery **crosses a low threshold** while discharging (default 20%,
   10%, 5% — one alert per threshold per discharge cycle, no spam);
 - **AC power comes back**.
 
-No dependencies beyond what ships with macOS (`bash`, `curl`, `pmset`,
-`launchd`).
+Runs from launchd on macOS and from a systemd timer on Linux. No
+dependencies beyond `bash` and `curl`.
 
 ## 1. Create a bot and get the two values
 
@@ -40,13 +41,15 @@ or non-interactively:
 ```
 
 The installer writes the config, installs the script as
-`~/.local/bin/battery-monitor`, creates the LaunchAgent
-`local.battery-monitor` (checks every 60 s, starts on login), loads it, and
-sends a test message to the bot.
+`~/.local/bin/battery-monitor`, registers the service — the LaunchAgent
+`local.battery-monitor` on macOS, or `battery-monitor.service` +
+`battery-monitor.timer` on Linux (system-wide via one sudo by default so it
+runs from boot; `--user-service` for user units + `sudo loginctl
+enable-linger $USER`) — starts it, and sends a test message to the bot.
 
 Options: `--thresholds "20 10 5"`, `--interval <sec>`, `--lang en|ru`,
-`--no-power-events`, `--no-test`, `--no-load`. Re-run `install.sh` any time to
-change settings — it updates everything in place.
+`--no-power-events`, `--user-service`, `--no-test`, `--no-load`. Re-run
+`install.sh` any time to change settings — it updates everything in place.
 
 ## Files
 
@@ -54,7 +57,8 @@ change settings — it updates everything in place.
 |---|---|
 | `~/.local/bin/battery-monitor` | the monitor script (`check` / `test` / `status`) |
 | `~/.config/battery-monitor/config` | settings incl. bot token (`chmod 600`, never in the repo) |
-| `~/Library/LaunchAgents/local.battery-monitor.plist` | the launchd service |
+| `~/Library/LaunchAgents/local.battery-monitor.plist` | the service (macOS) |
+| `/etc/systemd/system/battery-monitor.{service,timer}` | the service (Linux; user units go to `~/.config/systemd/user/`) |
 | `~/.local/state/battery-monitor/monitor.log` | log (size-capped) |
 | `~/.local/state/battery-monitor/state` | alert de-duplication state |
 
@@ -68,7 +72,8 @@ Changing `--interval` requires re-running `install.sh`.
 battery-monitor status                                  # parsed battery state
 battery-monitor test                                    # send a test message
 tail -f ~/.local/state/battery-monitor/monitor.log      # one line per check
-launchctl print gui/$(id -u)/local.battery-monitor      # launchd's view
+launchctl print gui/$(id -u)/local.battery-monitor      # macOS: launchd's view
+systemctl status battery-monitor.timer                  # Linux: timer state
 ```
 
 ## Uninstall
