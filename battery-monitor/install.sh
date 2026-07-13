@@ -17,6 +17,9 @@
 #   --interval <sec>      how often to check (default 60, min 10)
 #   --lang <en|ru>        alert message language (default en)
 #   --no-power-events     don't alert on AC <-> battery transitions
+#   --proxy <url>         proxy for reaching api.telegram.org, e.g.
+#                          socks5h://127.0.0.1:1080 — needed where Telegram
+#                          is blocked on the network (e.g. hosting in Russia)
 #   --user-service        Linux: systemd user units instead of system-wide
 #   --no-test             don't send a test message after installing
 #   --no-load             write files but don't register/start the service
@@ -44,6 +47,7 @@ USER_NAME=$(id -un)
 
 TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+PROXY="${TELEGRAM_PROXY:-}"
 THRESHOLDS="20 10 5"
 INTERVAL=60
 MSG_LANG="en"
@@ -52,7 +56,7 @@ RUN_TEST=1
 LOAD=1
 SCOPE="system"   # Linux only: system | user
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "install.sh: $*" >&2; exit 1; }
 
 need_arg() { [ $# -ge 2 ] || die "option $1 needs a value"; }
@@ -64,6 +68,7 @@ while [ $# -gt 0 ]; do
         --interval)        need_arg "$@"; INTERVAL="$2"; shift 2 ;;
         --lang)            need_arg "$@"; MSG_LANG="$2"; shift 2 ;;
         --no-power-events) POWER_EVENTS=0; shift ;;
+        --proxy)           need_arg "$@"; PROXY="$2"; shift 2 ;;
         --user-service)    SCOPE="user"; shift ;;
         --no-test)         RUN_TEST=0; shift ;;
         --no-load)         LOAD=0; shift ;;
@@ -140,6 +145,9 @@ umask 077
     echo "# Keep this file private: it contains the bot token (chmod 600)."
     printf 'TELEGRAM_BOT_TOKEN=%q\n' "$TOKEN"
     printf 'TELEGRAM_CHAT_ID=%q\n' "$CHAT_ID"
+    echo "# Proxy for reaching api.telegram.org, e.g. socks5h://127.0.0.1:1080 —"
+    echo "# set this if Telegram is blocked on this network (e.g. hosting in Russia)."
+    printf 'TELEGRAM_PROXY=%q\n' "$PROXY"
     printf 'ALERT_THRESHOLDS=%q\n' "$THRESHOLDS"
     printf 'NOTIFY_POWER_EVENTS=%q\n' "$POWER_EVENTS"
     printf 'MESSAGE_LANG=%q\n' "$MSG_LANG"

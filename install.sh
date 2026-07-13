@@ -18,7 +18,9 @@
 #   --user-service        Linux: systemd user units instead of system-wide
 #   --no-load             write files but don't register/start the services
 #   battery watchdog options are passed through: --token, --chat-id,
-#   --thresholds, --interval, --lang en|ru, --no-power-events, --no-test
+#   --thresholds, --interval, --lang en|ru, --no-power-events, --proxy <url>
+#   (for hosts where Telegram is blocked, e.g. socks5h://127.0.0.1:1080),
+#   --no-test
 #   (without --token/--chat-id the watchdog installer asks interactively;
 #    see battery-monitor/README.md for creating the bot)
 #
@@ -48,7 +50,7 @@ LOAD=1
 SCOPE="system"   # Linux only: system | user
 BATTERY_ARGS=()
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "install.sh: $*" >&2; exit 1; }
 need_arg() { [ $# -ge 2 ] || die "option $1 needs a value"; }
 
@@ -59,7 +61,7 @@ while [ $# -gt 0 ]; do
         --battery-only)    INSTALL_APP=0; shift ;;
         --user-service)    SCOPE="user"; BATTERY_ARGS+=(--user-service); shift ;;
         --no-load)         LOAD=0; BATTERY_ARGS+=(--no-load); shift ;;
-        --token|--chat-id|--thresholds|--interval|--lang)
+        --token|--chat-id|--thresholds|--interval|--lang|--proxy)
                            need_arg "$@"; BATTERY_ARGS+=("$1" "$2"); shift 2 ;;
         --no-power-events|--no-test)
                            BATTERY_ARGS+=("$1"); shift ;;

@@ -28,6 +28,8 @@ MAX_LOG_BYTES=1000000
 # Defaults; the config file overrides them.
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
+TELEGRAM_PROXY=""            # e.g. socks5h://127.0.0.1:1080 — for when api.telegram.org
+                              # is blocked on this network (e.g. hosting in Russia)
 ALERT_THRESHOLDS="20 10 5"   # battery % levels that trigger a low-battery alert
 NOTIFY_POWER_EVENTS=1        # 1 = alert on AC <-> battery transitions
 MESSAGE_LANG="en"            # en | ru
@@ -247,13 +249,15 @@ send_telegram() {
         log "ERROR: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set — edit $CONFIG_FILE"
         return 1
     fi
-    if curl -fsS --max-time 15 --retry 2 --retry-delay 2 \
+    local curl_opts=(-fsS --max-time 15 --retry 2 --retry-delay 2)
+    [ -n "$TELEGRAM_PROXY" ] && curl_opts+=(--proxy "$TELEGRAM_PROXY")
+    if curl "${curl_opts[@]}" \
         "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=${text}" >/dev/null 2>>"$LOG_FILE"; then
         log "sent: $text"
     else
-        log "ERROR: failed to send Telegram message: $text"
+        log "ERROR: failed to send Telegram message${TELEGRAM_PROXY:+ (via proxy $TELEGRAM_PROXY)}: $text"
         return 1
     fi
 }
@@ -320,7 +324,7 @@ do_status() {
     echo "state file: $STATE_FILE (LAST_SOURCE=${LAST_SOURCE:-unset} ALERTED_THRESHOLD=${ALERTED_THRESHOLD:-none})"
     echo "log:        $LOG_FILE"
     echo "battery:    source=$SOURCE percent=${PERCENT:-n/a} state=${CHARGE_STATE:-n/a} remain=${REMAIN:-n/a}"
-    echo "settings:   thresholds='$ALERT_THRESHOLDS' power_events=$NOTIFY_POWER_EVENTS lang=$MESSAGE_LANG dry_run=$DRY_RUN"
+    echo "settings:   thresholds='$ALERT_THRESHOLDS' power_events=$NOTIFY_POWER_EVENTS lang=$MESSAGE_LANG dry_run=$DRY_RUN proxy=${TELEGRAM_PROXY:-none}"
 }
 
 usage() {

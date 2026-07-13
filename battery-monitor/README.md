@@ -48,8 +48,38 @@ runs from boot; `--user-service` for user units + `sudo loginctl
 enable-linger $USER`) — starts it, and sends a test message to the bot.
 
 Options: `--thresholds "20 10 5"`, `--interval <sec>`, `--lang en|ru`,
-`--no-power-events`, `--user-service`, `--no-test`, `--no-load`. Re-run
-`install.sh` any time to change settings — it updates everything in place.
+`--no-power-events`, `--proxy <url>`, `--user-service`, `--no-test`,
+`--no-load`. Re-run `install.sh` any time to change settings — it updates
+everything in place.
+
+## Telegram is blocked on the server (e.g. hosting in Russia)
+
+`api.telegram.org` is blocked at the network level by some Russian ISPs and
+hosting providers — `curl` will time out or fail to resolve/connect, even
+though the bot token and chat id are correct. Fix: route the watchdog's
+requests through a proxy that has unblocked access.
+
+At install time:
+
+```bash
+./install.sh --proxy 'socks5h://127.0.0.1:1080'   # or http://user:pass@host:port
+```
+
+Already installed? No need to reinstall — just add the line to the config
+(it's re-read on every check):
+
+```bash
+echo "TELEGRAM_PROXY='socks5h://127.0.0.1:1080'" >> ~/.config/battery-monitor/config
+battery-monitor test
+```
+
+Prefer `socks5h://` over `socks5://` for a SOCKS5 proxy — the `h` makes the
+*proxy* resolve `api.telegram.org`, which matters when DNS for that host is
+also poisoned/blocked locally, not just the connection. For an HTTP/HTTPS
+proxy (`http://...`), DNS resolution always happens on the proxy side, so
+plain `http://` is fine. Provisioning the proxy itself (a SOCKS5/Shadowsocks
+endpoint on a host outside the block, or an existing one you already use) is
+outside this script's scope.
 
 ## Files
 
