@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# battery-monitor — watch this Mac's power/battery state and alert a Telegram
-# bot when the machine switches to battery power (possible outage), crosses
+# battery-monitor — watch this machine's power/battery state and alert a
+# Telegram bot when it switches to battery power (possible outage), crosses
 # low-battery thresholds while discharging, or gets AC power back.
 #
-# One check per invocation; launchd runs it periodically (see install.sh).
-# macOS only (reads state with `pmset`).
+# One check per invocation; launchd (macOS) or a systemd timer (Linux) runs
+# it periodically — see install.sh. Battery state comes from `pmset` on macOS
+# and /sys/class/power_supply on Linux.
 #
 # Usage: battery-monitor [check|test|status]
 #   check   read battery state and send alerts if needed (default, used by launchd)
@@ -19,6 +20,7 @@ set -euo pipefail
 
 CONFIG_FILE="${BATTERY_MONITOR_CONFIG:-$HOME/.config/battery-monitor/config}"
 STATE_DIR="${BATTERY_MONITOR_STATE_DIR:-$HOME/.local/state/battery-monitor}"
+POWER_SUPPLY_DIR="${BATTERY_MONITOR_POWER_SUPPLY_DIR:-/sys/class/power_supply}"
 STATE_FILE="$STATE_DIR/state"
 LOG_FILE="$STATE_DIR/monitor.log"
 MAX_LOG_BYTES=1000000
@@ -57,6 +59,16 @@ CHARGE_STATE=""    # discharging | charging | charged | ...
 REMAIN=""          # h:mm estimate while discharging, may be empty
 
 read_battery() {
+    if [ -d "$POWER_SUPPLY_DIR" ]; then
+        read_battery_sysfs
+    else
+        read_battery_pmset
+    fi
+    case "$PERCENT" in ''|*[!0-9]*) PERCENT="" ;; esac
+    return 0
+}
+
+read_battery_pmset() {
     local out line
     out=$(pmset -g batt)
     case "$out" in
@@ -70,6 +82,56 @@ read_battery() {
     CHARGE_STATE=$(printf '%s\n' "$line" | sed -nE 's/.*%; *([^;]+);.*/\1/p')
     REMAIN=$(printf '%s\n' "$line" | grep -Eo '[0-9]+:[0-9]{2}' | head -n 1 || true)
     if [ "$REMAIN" = "0:00" ]; then REMAIN=""; fi
+    return 0
+}
+
+# Linux: /sys/class/power_supply — a "Battery" device carries capacity/status,
+# a "Mains"/"USB" device carries online (AC connected or not).
+read_battery_sysfs() {
+    local d t bat="" have_mains="" ac_online="" status=""
+    for d in "$POWER_SUPPLY_DIR"/*/; do
+        [ -f "$d/type" ] || continue
+        t=$(cat "$d/type" 2>/dev/null || true)
+        case "$t" in
+            Battery)
+                if [ -z "$bat" ] && [ -f "$d/capacity" ]; then bat="$d"; fi ;;
+            Mains|USB*|Wireless|BrickID)
+                have_mains=1
+                if [ "$(cat "$d/online" 2>/dev/null || true)" = "1" ]; then ac_online=1; fi ;;
+        esac
+    done
+    if [ -n "$bat" ]; then
+        PERCENT=$(cat "$bat/capacity" 2>/dev/null || true)
+        status=$(cat "$bat/status" 2>/dev/null || true)
+        CHARGE_STATE=$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')
+    fi
+    if [ -n "$have_mains" ]; then
+        if [ -n "$ac_online" ]; then SOURCE="AC"; else SOURCE="BATTERY"; fi
+    else
+        case "$status" in
+            Discharging)                  SOURCE="BATTERY" ;;
+            Charging|Full|Not\ charging)  SOURCE="AC" ;;
+            *)                            SOURCE="UNKNOWN" ;;
+        esac
+    fi
+    # Time-left estimate while discharging: energy_now/power_now (µWh/µW) or
+    # charge_now/current_now (µAh/µA) — both ratios give hours.
+    if [ "$CHARGE_STATE" = "discharging" ] && [ -n "$bat" ]; then
+        local e="" p=""
+        if [ -f "$bat/energy_now" ] && [ -f "$bat/power_now" ]; then
+            e=$(cat "$bat/energy_now" 2>/dev/null || true)
+            p=$(cat "$bat/power_now" 2>/dev/null || true)
+        elif [ -f "$bat/charge_now" ] && [ -f "$bat/current_now" ]; then
+            e=$(cat "$bat/charge_now" 2>/dev/null || true)
+            p=$(cat "$bat/current_now" 2>/dev/null || true)
+        fi
+        case "$e" in ''|*[!0-9]*) return 0 ;; esac
+        case "$p" in ''|*[!0-9]*) return 0 ;; esac
+        if [ "$p" -gt 0 ]; then
+            local mins=$(( e * 60 / p ))
+            REMAIN=$(printf '%d:%02d' $(( mins / 60 )) $(( mins % 60 )))
+        fi
+    fi
     return 0
 }
 
@@ -266,8 +328,8 @@ usage() {
 }
 
 main() {
-    if ! command -v pmset >/dev/null 2>&1; then
-        echo "battery-monitor: pmset not found — this tool is macOS-only" >&2
+    if [ ! -d "$POWER_SUPPLY_DIR" ] && ! command -v pmset >/dev/null 2>&1; then
+        echo "battery-monitor: neither pmset (macOS) nor /sys/class/power_supply (Linux) found" >&2
         exit 1
     fi
     mkdir -p "$STATE_DIR"
