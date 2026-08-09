@@ -106,6 +106,16 @@
   .rec-clip .rc-time { font-weight: 600; }
   .rec-clip .rc-sub { font-size: 12px; color: #888; margin-top: 2px; }
   .rec-clip .rc-right { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+
+  /* ---- detection zone: live overlay + drag-to-draw editor ---- */
+  .zone-box { position: absolute; border: 2px dashed #f5a623; pointer-events: none; border-radius: 2px; }
+  .zone-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000;
+                          display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .zone-modal { background: #1c1f26; border-radius: 10px; padding: 16px; max-width: 640px; width: 100%; }
+  .zone-modal h3 { margin-top: 0; }
+  .zone-modal .video-wrap { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+  .zone-modal .video-wrap img { display: block; width: 100%; }
+  .zone-modal canvas { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
 </style>
 </head>
 <body>
@@ -137,6 +147,11 @@
     <div id="scanResults"></div>
 
     <h3>My cameras</h3>
+    <div class="hint" style="margin-bottom:8px">
+      🎯 Detection zone: mark a specific spot in the frame (e.g. a corner where a small or distant
+      animal keeps slipping past detection) — that area gets a lower motion threshold and its own
+      zoomed-in detector pass, in addition to normal whole-frame detection.
+    </div>
     <div id="camList"></div>
     <div class="cam-row">
       <div class="grid2">
@@ -310,6 +325,7 @@ function makeTile(cam) {
   root.innerHTML = `
     <div class="video-box">
       ${player}
+      <div class="zone-box" style="display:none"></div>
       <div class="overlay">Connecting…</div>
     </div>
     <div class="cam-info">
@@ -328,6 +344,7 @@ function makeTile(cam) {
     connText: root.querySelector('.conn-text'),
     dets: root.querySelector('.dets'),
     recBtn: root.querySelector('.rec-btn'),
+    zoneBox: root.querySelector('.zone-box'),
   };
   t.recBtn.onclick = async () => {
     const next = !manualState[cam.id];
@@ -355,6 +372,13 @@ function updateTile(t, st) {
     ? '👁 ' + st.detections.map(d => `${d.label} ${Math.round(d.conf*100)}%`).join(', ') : '';
   manualState[st.id] = st.manual_record;
   updateRecBtn(t, st.manual_record);
+  if (Array.isArray(st.zone) && st.zone.length === 4) {
+    const [x1, y1, x2, y2] = st.zone;
+    t.zoneBox.style.cssText =
+      `display:block;left:${x1*100}%;top:${y1*100}%;width:${(x2-x1)*100}%;height:${(y2-y1)*100}%`;
+  } else {
+    t.zoneBox.style.display = 'none';
+  }
 }
 
 async function poll() {
@@ -565,6 +589,7 @@ async function loadCamList() {
       <div class="bar">
         <button class="small" data-act="test">🔌 Test</button>
         <button class="small" data-act="save">💾 Save</button>
+        <button class="small" data-act="zone">🎯 Detection zone${c.zone ? ' ✓' : ''}</button>
         <button class="small danger" data-act="del">🗑 Delete</button>
         <span class="status msg"></span>
       </div>
@@ -578,6 +603,7 @@ async function loadCamList() {
       msg.textContent = 'Saved ✓'; msg.style.color = '#27ae60';
       poll();
     };
+    row.querySelector('[data-act="zone"]').onclick = () => openZoneEditor(c);
     row.querySelector('[data-act="del"]').onclick = async () => {
       if (!confirm(`Delete camera "${c.name}"? The recordings will remain on disk.`)) return;
       await api(`/api/cameras/${c.id}`, undefined, 'DELETE');
@@ -585,6 +611,94 @@ async function loadCamList() {
     };
     box.appendChild(row);
   }
+}
+
+// ---------- detection zone editor: drag a rectangle over the live view ----------
+function openZoneEditor(cam) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'zone-modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="zone-modal">
+      <h3>🎯 Detection zone — ${(cam.name || '').replace(/</g, '&lt;')}</h3>
+      <div class="hint">Drag a rectangle over the spot you want to watch more closely (e.g. where a small
+        or distant animal keeps going unnoticed). Inside it the app applies a lower motion threshold and
+        runs a zoomed-in detector pass, so small/far objects are far more likely to be caught.</div>
+      <div class="video-wrap" style="margin-top:10px">
+        <img src="/stream/${cam.id}?t=${Date.now()}" alt="">
+        <canvas></canvas>
+      </div>
+      <div class="bar" style="margin-top:10px">
+        <button class="small on" data-act="save">💾 Save zone</button>
+        <button class="small danger" data-act="clear">🗑 Clear zone</button>
+        <button class="small" data-act="close">Close</button>
+        <span class="status msg"></span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+
+  const wrap = backdrop.querySelector('.video-wrap');
+  const canvas = backdrop.querySelector('canvas');
+  const msg = backdrop.querySelector('.msg');
+  let rect = Array.isArray(cam.zone) && cam.zone.length === 4 ? cam.zone.slice() : null;
+  let dragStart = null;
+
+  function draw() {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!rect) return;
+    const [x1, y1, x2, y2] = rect;
+    ctx.strokeStyle = '#f5a623';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(x1 * canvas.width, y1 * canvas.height, (x2 - x1) * canvas.width, (y2 - y1) * canvas.height);
+  }
+  function sizeCanvas() {
+    canvas.width = wrap.clientWidth;
+    canvas.height = wrap.clientHeight;
+    draw();
+  }
+  new ResizeObserver(sizeCanvas).observe(wrap);
+  wrap.querySelector('img').addEventListener('load', sizeCanvas);
+  sizeCanvas();
+
+  const posOf = (e) => {
+    const r = canvas.getBoundingClientRect();
+    return [
+      Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)),
+      Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)),
+    ];
+  };
+  canvas.addEventListener('pointerdown', (e) => {
+    dragStart = posOf(e);
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragStart) return;
+    const cur = posOf(e);
+    rect = [Math.min(dragStart[0], cur[0]), Math.min(dragStart[1], cur[1]),
+            Math.max(dragStart[0], cur[0]), Math.max(dragStart[1], cur[1])];
+    draw();
+  });
+  canvas.addEventListener('pointerup', () => { dragStart = null; });
+
+  backdrop.querySelector('[data-act="close"]').onclick = () => backdrop.remove();
+  backdrop.querySelector('[data-act="clear"]').onclick = async () => {
+    await api(`/api/cameras/${cam.id}`, {zone: null});
+    rect = null; draw();
+    msg.textContent = '✓ Zone cleared'; msg.style.color = '#27ae60';
+    loadCamList(); poll();
+  };
+  backdrop.querySelector('[data-act="save"]').onclick = async () => {
+    if (!rect || rect[2] - rect[0] < 0.02 || rect[3] - rect[1] < 0.02) {
+      msg.textContent = 'Drag a rectangle over the video first'; msg.style.color = '#e74c3c';
+      return;
+    }
+    const r = await api(`/api/cameras/${cam.id}`, {zone: rect});
+    if (r.error) { msg.textContent = '✗ ' + r.error; msg.style.color = '#e74c3c'; return; }
+    msg.textContent = '✓ Zone saved'; msg.style.color = '#27ae60';
+    loadCamList(); poll();
+  };
 }
 
 // ---------- recordings: DVR-style calendar + 24h timeline ----------

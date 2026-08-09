@@ -130,6 +130,8 @@ class StreamCopyRecorder:
             self.proc.kill()
 
 
+_UNSET = object()   # marks "argument not provided" where None is itself a valid value (clear a field)
+
 DEFAULT_CONFIG = {
     "cameras": [],                 # [{"id": "...", "name": "...", "source": "rtsp://..."}]
     "auto_record": True,           # auto-record on detection (shared setting for all cameras)
@@ -440,6 +442,18 @@ def capture_url_for(cam_id, source, shared_cfg):
     return source
 
 
+def _box_iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if inter <= 0:
+        return 0.0
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+
 def get_yolo_model():
     """One model for the whole app — a shared detector across cameras saves memory and CPU."""
     global _yolo_model
@@ -454,11 +468,15 @@ def get_yolo_model():
 class Camera:
     """Reads one camera's stream, keeps the latest frame and pre-buffer, and writes video."""
 
-    def __init__(self, cam_id, name, source, shared_cfg):
+    def __init__(self, cam_id, name, source, shared_cfg, zone=None):
         self.id = cam_id
         self.name = name
         self.source = source
         self.shared_cfg = shared_cfg   # shared detection settings — reference to the global config
+        # optional [x1,y1,x2,y2] normalized (0..1) sub-region of the frame that gets extra-sensitive
+        # motion gating plus its own cropped+upscaled YOLO pass — for animals too small/far to
+        # register against the whole-frame motion threshold or be classified at full-frame resolution
+        self.zone = zone
 
         self.recordings_dir = RECORDINGS_DIR / cam_id
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
@@ -569,7 +587,20 @@ class Camera:
         self._motion_mask = moved
         changed = np.count_nonzero(moved) / small.size
         self._motion_frac = changed             # ambient motion level, read by _box_is_moving
-        if changed * 100.0 >= float(self.shared_cfg.get("motion_threshold", 0.5)):
+        # a small/distant animal moves too few pixels to clear the threshold against the WHOLE
+        # frame, but the same pixel count is a much bigger fraction of just the zone crop — so
+        # the gate also opens on zone-local motion, without loosening the whole-frame threshold
+        # (which stays as-is for every other camera and for the rest of this frame)
+        gate_frac = changed
+        if self.zone:
+            mh, mw = moved.shape
+            zx1, zy1, zx2, zy2 = self.zone
+            zx1i, zx2i = max(0, int(zx1 * mw)), min(mw, int(zx2 * mw))
+            zy1i, zy2i = max(0, int(zy1 * mh)), min(mh, int(zy2 * mh))
+            if zx2i > zx1i and zy2i > zy1i:
+                zone_region = moved[zy1i:zy2i, zx1i:zx2i]
+                gate_frac = max(gate_frac, np.count_nonzero(zone_region) / zone_region.size)
+        if gate_frac * 100.0 >= float(self.shared_cfg.get("motion_threshold", 0.5)):
             self.last_motion_ts = now
             self.motion = True
         elif now - self.last_motion_ts > 1.0:
@@ -603,6 +634,25 @@ class Camera:
         frac = np.count_nonzero(region) / region.size
         excess = frac - self._motion_frac   # box motion above the ambient (rain/snow) floor
         return excess * 100.0 >= float(self.shared_cfg.get("object_motion_threshold", 2.0))
+
+    def _zone_crop(self, frame):
+        """Crop the configured zone out of the frame and upscale it (capped 4x, capped at
+        640px on the long side) so a small/distant animal fills far more pixels — YOLO's
+        classification confidence scales with how many pixels the object actually occupies.
+        Returns (crop, x_offset, y_offset, scale) in full-frame pixel terms, or None."""
+        if not self.zone:
+            return None
+        fh, fw = frame.shape[:2]
+        x1, y1, x2, y2 = self.zone
+        px1, py1 = max(0, int(x1 * fw)), max(0, int(y1 * fh))
+        px2, py2 = min(fw, int(x2 * fw)), min(fh, int(y2 * fh))
+        if px2 - px1 < 8 or py2 - py1 < 8:
+            return None
+        crop = frame[py1:py2, px1:px2]
+        scale = min(4.0, 640.0 / max(crop.shape[0], crop.shape[1]))
+        if scale > 1.0:
+            crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        return crop, px1, py1, scale
 
     def _on_captured_frame(self, frame):
         """Capture-thread hot path — kept deliberately light so cap.read() runs again
@@ -840,6 +890,37 @@ class Camera:
                     qualifying = True
                     if not trigger_label:
                         trigger_label = label
+
+            # extra pass on the configured zone, cropped and upscaled: a small/distant animal
+            # that's just a handful of pixels in the full 640px frame becomes classifiable once
+            # zoomed in. Boxes are mapped back to full-frame coordinates and merged (skipping
+            # near-duplicates already found by the full-frame pass above).
+            zone_crop = self._zone_crop(frame)
+            if zone_crop is not None:
+                zcrop, zx_off, zy_off, zscale = zone_crop
+                try:
+                    with _yolo_lock:
+                        zresults = model.predict(zcrop, conf=float(self.shared_cfg["confidence"]),
+                                                 imgsz=640, verbose=False)
+                except Exception as e:
+                    zresults = None
+                    self.error = f"Detector error (zone): {e}"
+                if zresults is not None:
+                    for box in zresults[0].boxes:
+                        cls = int(box.cls[0])
+                        label = names[cls]
+                        zx1, zy1, zx2, zy2 = (float(v) for v in box.xyxy[0])
+                        mapped = [int(zx1 / zscale) + zx_off, int(zy1 / zscale) + zy_off,
+                                  int(zx2 / zscale) + zx_off, int(zy2 / zscale) + zy_off]
+                        if any(d["label"] == label and _box_iou(d["box"], mapped) > 0.3 for d in dets):
+                            continue
+                        dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped})
+                        if cls in wanted_ids and (not require_motion
+                                                  or self._box_is_moving(mapped, frame.shape)):
+                            qualifying = True
+                            if not trigger_label:
+                                trigger_label = label
+
             self.detections = dets
             self.detections_ts = time.time()
             # require the movement to PERSIST across consecutive passes: a real object
@@ -879,6 +960,7 @@ class Camera:
             "detections": [
                 {"label": d["label"], "conf": round(d["conf"], 2)} for d in self.detections
             ] if time.time() - self.detections_ts < 2.5 else [],
+            "zone": self.zone,
         }
 
 
@@ -894,7 +976,8 @@ class CameraManager:
             cam_cfg["id"] = cam_id
             name = cam_cfg.get("name") or cam_id
             source = cam_cfg.get("source", "")
-            self.cameras[cam_id] = Camera(cam_id, name, source, config)
+            zone = cam_cfg.get("zone")
+            self.cameras[cam_id] = Camera(cam_id, name, source, config, zone=zone)
 
     def all(self):
         with self.lock:
@@ -917,7 +1000,7 @@ class CameraManager:
             self.cameras[cam_id] = cam
         return cam
 
-    def update(self, cam_id, name=None, source=None):
+    def update(self, cam_id, name=None, source=None, zone=_UNSET):
         with self.lock:
             cam = self.cameras.get(cam_id)
             if not cam:
@@ -928,12 +1011,19 @@ class CameraManager:
                         entry["name"] = name
                     if source is not None:
                         entry["source"] = source
+                    if zone is not _UNSET:
+                        if zone is None:
+                            entry.pop("zone", None)
+                        else:
+                            entry["zone"] = zone
                     break
             save_config(self.config)
             if name is not None:
                 cam.name = name
             if source is not None and source != cam.source:
                 cam.update_source(source)
+            if zone is not _UNSET:
+                cam.zone = zone
         return cam
 
     def remove(self, cam_id):
@@ -1581,7 +1671,8 @@ def api_test_source():
 
 @app.route("/api/cameras", methods=["GET"])
 def api_cameras_list():
-    return jsonify([{"id": c.id, "name": c.name, "source": c.source} for c in manager.all()])
+    return jsonify([{"id": c.id, "name": c.name, "source": c.source, "zone": c.zone}
+                    for c in manager.all()])
 
 
 @app.route("/api/cameras", methods=["POST"])
@@ -1596,14 +1687,32 @@ def api_cameras_add():
     return jsonify({"id": cam.id, "name": cam.name, "source": cam.source})
 
 
+def _parse_zone(raw):
+    """[x1,y1,x2,y2] normalized 0..1, ordered and clipped — or None (invalid/absent -> caller clears it)."""
+    if not (isinstance(raw, (list, tuple)) and len(raw) == 4):
+        return None
+    try:
+        x1, y1, x2, y2 = (max(0.0, min(1.0, float(v))) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    x1, x2 = sorted((x1, x2))
+    y1, y2 = sorted((y1, y2))
+    if x2 - x1 < 0.02 or y2 - y1 < 0.02:   # too thin to be a meaningful zone
+        return None
+    return [round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4)]
+
+
 @app.route("/api/cameras/<cam_id>", methods=["POST"])
 def api_cameras_update(cam_id):
     data = request.get_json(force=True)
-    cam = manager.update(cam_id, name=data.get("name"), source=data.get("source"))
+    zone = _UNSET
+    if "zone" in data:
+        zone = _parse_zone(data["zone"]) if data["zone"] is not None else None
+    cam = manager.update(cam_id, name=data.get("name"), source=data.get("source"), zone=zone)
     if not cam:
         return jsonify({"error": "not found"}), 404
     _cameras_changed()
-    return jsonify({"id": cam.id, "name": cam.name, "source": cam.source})
+    return jsonify({"id": cam.id, "name": cam.name, "source": cam.source, "zone": cam.zone})
 
 
 @app.route("/api/cameras/<cam_id>", methods=["DELETE"])
