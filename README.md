@@ -150,6 +150,9 @@ DVRIP configuration.
 | `pre_seconds` | how many seconds before the event are included in the clip |
 | `post_seconds` | how long to keep recording after the object disappears |
 | `max_clip_minutes` | splitting long recordings into files |
+| `retention_days` | delete clips older than N days (0 = no limit) |
+| `retention_gb` | size cap for `recordings/` — oldest clips are deleted first (0 = no limit) |
+| `min_free_gb` | always keep this much free disk space (2 GB by default; 0 = off). Without it the disk fills up and recording silently stops |
 | `detect_on_motion` | run YOLO only when motion is detected — saves CPU (on by default) |
 | `motion_threshold` | % of the frame that must change to count as motion |
 | `record_mode` | `annotated` — H.264 re-encode with pre-buffer (clean image, no boxes); `copy` — raw stream with no re-encoding, with audio (see below) |

@@ -258,6 +258,20 @@
     <div class="hint">Motion gating: a cheap frame-difference check runs first, and YOLO fires only when something moves — so static objects aren't boxed and idle cameras cost almost no CPU. Lower threshold = more sensitive.</div>
     <div class="hint">Record only moving objects: a parked car is still detected/boxed on the live view but won't start a recording — only an object with movement inside its box does (car driving past, person walking). Movement is measured relative to the whole frame, so rain, snow and night-time sensor flicker (which change the whole picture at once) don't trigger recording. Raise the box % if slight camera noise still triggers it.</div>
     <div class="hint">Sustained motion before recording: the moving object must be seen for this many detection passes in a row (each ≈ the detect interval) before a recording starts — so a momentary rain streak, bug or IR flicker that clips an object for a single frame is ignored, while a real object keeps moving. The pre-buffer still backfills the seconds before, so nothing is lost. Set to 1 to record on the very first frame of motion; raise it if rain still triggers.</div>
+    <h3>Storage (local disk)</h3>
+    <div class="grid">
+      <div><label>Keep clips for (days, 0 = no limit)</label>
+        <input id="retention_days" type="number" min="0" max="3650" step="1"></div>
+      <div><label>Archive size limit (GB, 0 = no limit)</label>
+        <input id="retention_gb" type="number" min="0" step="1"></div>
+      <div><label>Always keep free (GB, 0 = off)</label>
+        <input id="min_free_gb" type="number" min="0" step="0.5"></div>
+    </div>
+    <div class="bar" style="margin-top:2px">
+      <span class="status" id="storageInfo"></span>
+      <button class="small" onclick="cleanupNow()">🧹 Clean up now</button>
+    </div>
+    <div class="hint">The oldest clips are deleted first, whenever any limit is exceeded (checked every 5 minutes). A clip that is being recorded right now is never deleted. Without a limit the disk eventually fills up and recording silently stops — "keep free" is the safety net for exactly that.</div>
     <div class="bar"><button onclick="saveConfig()">💾 Save</button><span id="saveMsg" class="status"></span></div>
   </section>
 
@@ -413,6 +427,29 @@ async function loadConfig() {
   document.getElementById('require_object_motion').value = c.require_object_motion ? 'true' : 'false';
   document.getElementById('object_motion_threshold').value = c.object_motion_threshold;
   document.getElementById('trigger_min_passes').value = c.trigger_min_passes;
+  document.getElementById('retention_days').value = c.retention_days;
+  document.getElementById('retention_gb').value = c.retention_gb;
+  document.getElementById('min_free_gb').value = c.min_free_gb;
+  loadStorage();
+}
+
+const gb = b => (b / 1e9).toFixed(1) + ' GB';
+
+async function loadStorage(s) {
+  const el = document.getElementById('storageInfo');
+  if (!el) return;
+  try {
+    s = s || await api('/api/storage');
+    el.textContent = `${s.clips} clip(s), ${gb(s.used_bytes)} used, ${gb(s.free_bytes)} free on disk`;
+  } catch (e) { el.textContent = ''; }
+}
+
+async function cleanupNow() {
+  const el = document.getElementById('storageInfo');
+  el.textContent = 'cleaning…';
+  const s = await api('/api/storage', {});
+  loadStorage(s);
+  if (s.removed) loadRecordings?.();
 }
 
 async function saveConfig() {
@@ -426,7 +463,11 @@ async function saveConfig() {
     require_object_motion: document.getElementById('require_object_motion').value === 'true',
     object_motion_threshold: parseFloat(document.getElementById('object_motion_threshold').value),
     trigger_min_passes: parseInt(document.getElementById('trigger_min_passes').value),
+    retention_days: parseInt(document.getElementById('retention_days').value) || 0,
+    retention_gb: parseFloat(document.getElementById('retention_gb').value) || 0,
+    min_free_gb: parseFloat(document.getElementById('min_free_gb').value) || 0,
   });
+  loadStorage();
   const msg = document.getElementById('saveMsg');
   msg.textContent = 'Saved ✓';
   setTimeout(() => msg.textContent = '', 2000);
