@@ -34,6 +34,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from uploader import Uploader
 from live import LiveRelay
 from hls import HlsRelay
+from retention import Retention
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -152,6 +153,10 @@ DEFAULT_CONFIG = {
     "pre_seconds": 5,             # how many seconds BEFORE the event are included in the clip
     "post_seconds": 10,           # how long to keep recording after the last detection
     "max_clip_minutes": 10,       # auto-split long recordings
+    # --- local storage limits (see retention.py) ---
+    "retention_days": 0,          # delete clips older than N days (0 = off)
+    "retention_gb": 0,            # cap the total size of recordings/ (0 = off)
+    "min_free_gb": 2,             # always keep this much free space (0 = off)
     # recording mode: "annotated" - H.264 with boxes/REC and pre-buffer (re-encoded);
     #                 "copy" - raw stream with no re-encoding, with audio, no boxes
     "record_mode": "annotated",
@@ -1572,6 +1577,10 @@ uploader = Uploader(RECORDINGS_DIR, config,
 _uploader = uploader
 uploader.start()
 
+retention = Retention(RECORDINGS_DIR, config,
+                      in_use=lambda: [c.record_path for c in manager.all() if c.record_path])
+retention.start()
+
 
 def _live_frame(cam_id):
     """Latest annotated JPEG for a camera — fed to the cloud live relay.
@@ -1746,6 +1755,16 @@ def api_upload_status():
     return jsonify(uploader.status())
 
 
+@app.route("/api/storage", methods=["GET", "POST"])
+def api_storage():
+    """GET: how much the archive uses / how much room is left.
+    POST: prune right now (also happens on a timer and after a limits change)."""
+    if request.method == "POST":
+        removed, freed = retention.sweep()
+        return jsonify({"removed": removed, "freed_bytes": freed, **retention.status()})
+    return jsonify(retention.status())
+
+
 @app.route("/api/upload/config", methods=["GET", "POST"])
 def api_upload_config():
     if request.method == "POST":
@@ -1803,6 +1822,9 @@ def api_config():
         # WebRTC/go2rtc capture was enabled — start (or rebuild) the server
         if config.get("view_mode") == "webrtc" or config.get("capture_via_go2rtc"):
             go2rtc.sync() if go2rtc.is_running() else go2rtc.start()
+        # tightened storage limits shouldn't wait for the next timed sweep
+        if {"retention_days", "retention_gb", "min_free_gb"} & set(data):
+            threading.Thread(target=retention.sweep, daemon=True).start()
     return jsonify({k: v for k, v in config.items() if k != "cameras"})
 
 
