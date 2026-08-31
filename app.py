@@ -35,6 +35,7 @@ from uploader import Uploader
 from live import LiveRelay
 from hls import HlsRelay
 from retention import Retention
+from detect_zoom import crop_upscale, motion_rect, tile_motion
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -605,6 +606,11 @@ class Camera:
             if zx2i > zx1i and zy2i > zy1i:
                 zone_region = moved[zy1i:zy2i, zx1i:zx2i]
                 gate_frac = max(gate_frac, np.count_nonzero(zone_region) / zone_region.size)
+        # same reasoning without a hand-drawn zone: a cat crossing the yard is ~0.1% of the
+        # whole frame and never reaches the threshold, but it is several percent of the tile
+        # it walks through. Gating on the busiest tile catches small movers ANYWHERE in frame
+        # (the gate only decides whether YOLO runs — what gets recorded is still up to it)
+        gate_frac = max(gate_frac, tile_motion(moved))
         if gate_frac * 100.0 >= float(self.shared_cfg.get("motion_threshold", 0.5)):
             self.last_motion_ts = now
             self.motion = True
@@ -639,25 +645,6 @@ class Camera:
         frac = np.count_nonzero(region) / region.size
         excess = frac - self._motion_frac   # box motion above the ambient (rain/snow) floor
         return excess * 100.0 >= float(self.shared_cfg.get("object_motion_threshold", 2.0))
-
-    def _zone_crop(self, frame):
-        """Crop the configured zone out of the frame and upscale it (capped 4x, capped at
-        640px on the long side) so a small/distant animal fills far more pixels — YOLO's
-        classification confidence scales with how many pixels the object actually occupies.
-        Returns (crop, x_offset, y_offset, scale) in full-frame pixel terms, or None."""
-        if not self.zone:
-            return None
-        fh, fw = frame.shape[:2]
-        x1, y1, x2, y2 = self.zone
-        px1, py1 = max(0, int(x1 * fw)), max(0, int(y1 * fh))
-        px2, py2 = min(fw, int(x2 * fw)), min(fh, int(y2 * fh))
-        if px2 - px1 < 8 or py2 - py1 < 8:
-            return None
-        crop = frame[py1:py2, px1:px2]
-        scale = min(4.0, 640.0 / max(crop.shape[0], crop.shape[1]))
-        if scale > 1.0:
-            crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-        return crop, px1, py1, scale
 
     def _on_captured_frame(self, frame):
         """Capture-thread hot path — kept deliberately light so cap.read() runs again
@@ -896,35 +883,43 @@ class Camera:
                     if not trigger_label:
                         trigger_label = label
 
-            # extra pass on the configured zone, cropped and upscaled: a small/distant animal
-            # that's just a handful of pixels in the full 640px frame becomes classifiable once
-            # zoomed in. Boxes are mapped back to full-frame coordinates and merged (skipping
+            # extra zoomed passes on cropped+upscaled regions: a small/distant animal that's
+            # just a handful of pixels in the full 640px frame becomes classifiable once zoomed
+            # in. Two regions — the configured zone (if any) and wherever motion is right now,
+            # so an animal is caught anywhere in frame, not only inside a hand-drawn box.
+            # Boxes are mapped back to full-frame coordinates and merged (skipping
             # near-duplicates already found by the full-frame pass above).
-            zone_crop = self._zone_crop(frame)
-            if zone_crop is not None:
+            for rect in (self.zone, motion_rect(self._motion_mask)):
+                zone_crop = crop_upscale(frame, rect)
+                if zone_crop is None:
+                    continue
                 zcrop, zx_off, zy_off, zscale = zone_crop
+                # an upscaled distant animal is soft and blurry — it rarely reaches the
+                # full-frame confidence, so this pass is more permissive. Safe: whatever it
+                # finds must still be MOVING and persist across passes before anything records.
+                # ponytail: derived from the main threshold, give it its own setting if the
+                # zoomed pass turns out to false-positive on a given scene
+                zconf = max(0.25, float(self.shared_cfg["confidence"]) * 0.6)
                 try:
                     with _yolo_lock:
-                        zresults = model.predict(zcrop, conf=float(self.shared_cfg["confidence"]),
-                                                 imgsz=640, verbose=False)
+                        zresults = model.predict(zcrop, conf=zconf, imgsz=640, verbose=False)
                 except Exception as e:
-                    zresults = None
-                    self.error = f"Detector error (zone): {e}"
-                if zresults is not None:
-                    for box in zresults[0].boxes:
-                        cls = int(box.cls[0])
-                        label = names[cls]
-                        zx1, zy1, zx2, zy2 = (float(v) for v in box.xyxy[0])
-                        mapped = [int(zx1 / zscale) + zx_off, int(zy1 / zscale) + zy_off,
-                                  int(zx2 / zscale) + zx_off, int(zy2 / zscale) + zy_off]
-                        if any(d["label"] == label and _box_iou(d["box"], mapped) > 0.3 for d in dets):
-                            continue
-                        dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped})
-                        if cls in wanted_ids and (not require_motion
-                                                  or self._box_is_moving(mapped, frame.shape)):
-                            qualifying = True
-                            if not trigger_label:
-                                trigger_label = label
+                    self.error = f"Detector error (zoom): {e}"
+                    continue
+                for box in zresults[0].boxes:
+                    cls = int(box.cls[0])
+                    label = names[cls]
+                    zx1, zy1, zx2, zy2 = (float(v) for v in box.xyxy[0])
+                    mapped = [int(zx1 / zscale) + zx_off, int(zy1 / zscale) + zy_off,
+                              int(zx2 / zscale) + zx_off, int(zy2 / zscale) + zy_off]
+                    if any(d["label"] == label and _box_iou(d["box"], mapped) > 0.3 for d in dets):
+                        continue
+                    dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped})
+                    if cls in wanted_ids and (not require_motion
+                                              or self._box_is_moving(mapped, frame.shape)):
+                        qualifying = True
+                        if not trigger_label:
+                            trigger_label = label
 
             self.detections = dets
             self.detections_ts = time.time()
