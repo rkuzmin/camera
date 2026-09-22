@@ -152,6 +152,9 @@ DEFAULT_CONFIG = {
     # before the trigger, so a genuinely moving object loses no footage. 1 = off.
     "trigger_min_passes": 2,
     "pre_seconds": 5,             # how many seconds BEFORE the event are included in the clip
+    # pre-buffer JPEG rate while nobody watches: encoding every full-res frame just for
+    # the pre-event seconds was the single biggest CPU cost (2x 1080p25 = 50 encodes/s)
+    "prebuffer_fps": 8,
     "post_seconds": 10,           # how long to keep recording after the last detection
     "max_clip_minutes": 10,       # auto-split long recordings
     # --- local storage limits (see retention.py) ---
@@ -703,6 +706,11 @@ class Camera:
             need_prebuffer = bool(self.shared_cfg.get("auto_record")) or self.recording
             if not (wants_view or need_prebuffer):
                 continue   # nobody watching, nothing to record -> no JPEG work at all
+            # pre-buffer only: a few fps is plenty for the pre-event seconds (the flush
+            # repeats frames to keep real-time speed) — skip the rest of the encodes
+            if not wants_view and self.prebuffer and \
+                    now - self.prebuffer[-1][0] < 1.0 / max(1.0, float(self.shared_cfg.get("prebuffer_fps", 8))):
+                continue
 
             # Clean frame (raw camera image, no overlays) — used for the pre-buffer /
             # recording, and for the live view too when there's nothing to draw on top.
@@ -800,9 +808,15 @@ class Camera:
         # (snapshot under the lock — the encoder thread appends to it concurrently)
         with self.lock:
             prebuffered = list(self.prebuffer)
-        for _, jpeg in prebuffered:
+        # the pre-buffer is sparse (throttled to prebuffer_fps, or frames dropped under
+        # load) — hold each frame for the time it covers so the pre-event part plays at
+        # real speed instead of fast-forwarding
+        for i, (ts, jpeg) in enumerate(prebuffered):
             frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-            if frame is not None:
+            if frame is None:
+                continue
+            nxt = prebuffered[i + 1][0] if i + 1 < len(prebuffered) else time.time()
+            for _ in range(max(1, round((nxt - ts) * self.fps))):
                 writer.write(frame)
         self.writer = writer
         self.record_path = path
