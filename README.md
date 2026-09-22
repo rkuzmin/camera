@@ -148,6 +148,7 @@ DVRIP configuration.
 | `detect_classes` | which objects trigger recording (COCO classes, in English) — shared across all cameras |
 | `confidence` | detector confidence threshold (0.45 by default) |
 | `pre_seconds` | how many seconds before the event are included in the clip |
+| `prebuffer_fps` | JPEG rate of the pre-event buffer while nobody watches (default 8; lower = less CPU) |
 | `post_seconds` | how long to keep recording after the object disappears |
 | `max_clip_minutes` | splitting long recordings into files |
 | `retention_days` | delete clips older than N days (0 = no limit) |
