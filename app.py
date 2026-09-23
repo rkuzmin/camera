@@ -498,7 +498,7 @@ class Camera:
         self.error = ""
 
         self.prebuffer = deque()      # (ts, jpeg_bytes) — for pre-recording
-        self.detections = []          # [{label, conf, box}], recent boxes
+        self.detections = []          # [{label, conf, box, moving}], recent MOVING objects
         self.detections_ts = 0.0
         self.last_trigger_ts = 0.0    # last detection of a wanted class
         self._trigger_streak = 0      # consecutive detect passes with a moving wanted object
@@ -888,11 +888,12 @@ class Camera:
                 cls = int(box.cls[0])
                 label = names[cls]
                 x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
-                dets.append({"label": label, "conf": float(box.conf[0]), "box": [x1, y1, x2, y2]})
                 # a wanted object triggers recording only if it's actually moving
                 # (unless the user turned that off) — parked cars stay unrecorded
-                if cls in wanted_ids and (not require_motion
-                                          or self._box_is_moving([x1, y1, x2, y2], frame.shape)):
+                moving = not require_motion or self._box_is_moving([x1, y1, x2, y2], frame.shape)
+                dets.append({"label": label, "conf": float(box.conf[0]), "box": [x1, y1, x2, y2],
+                             "moving": moving})
+                if cls in wanted_ids and moving:
                     qualifying = True
                     if not trigger_label:
                         trigger_label = label
@@ -928,14 +929,18 @@ class Camera:
                               int(zx2 / zscale) + zx_off, int(zy2 / zscale) + zy_off]
                     if any(d["label"] == label and _box_iou(d["box"], mapped) > 0.3 for d in dets):
                         continue
-                    dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped})
-                    if cls in wanted_ids and (not require_motion
-                                              or self._box_is_moving(mapped, frame.shape)):
+                    moving = not require_motion or self._box_is_moving(mapped, frame.shape)
+                    dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped,
+                                 "moving": moving})
+                    if cls in wanted_ids and moving:
                         qualifying = True
                         if not trigger_label:
                             trigger_label = label
 
-            self.detections = dets
+            # only moving objects are shown / tag clips — boxes on parked cars in the live
+            # view read as "it detects cars that aren't going anywhere", and a parked car
+            # tagged every clip on that camera "car"
+            self.detections = [d for d in dets if d["moving"]]
             self.detections_ts = time.time()
             # require the movement to PERSIST across consecutive passes: a real object
             # keeps moving, but a momentary rain streak / IR flicker / bug that clips a
