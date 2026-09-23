@@ -155,6 +155,7 @@ DVRIP configuration.
 | `retention_gb` | size cap for `recordings/` — oldest clips are deleted first (0 = no limit) |
 | `min_free_gb` | always keep this much free disk space (2 GB by default; 0 = off). Without it the disk fills up and recording silently stops |
 | `detect_on_motion` | run YOLO only when motion is detected — saves CPU (on by default) |
+| `idle_backoff_after` / `idle_backoff_interval` | after N sec (default 30) of motion with no moving object found, run YOLO only every M sec (default 2) until something is found — stops a cobweb/rain/branches from keeping the detector busy; 0 = off |
 | `motion_threshold` | % of the frame that must change to count as motion |
 | `record_mode` | `annotated` — H.264 re-encode with pre-buffer (clean image, no boxes); `copy` — raw stream with no re-encoding, with audio (see below) |
 | `view_mode` | `mjpeg` (default) or `webrtc` — low-latency viewing via go2rtc |

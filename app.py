@@ -141,6 +141,13 @@ DEFAULT_CONFIG = {
     "confidence": 0.45,           # detector confidence threshold
     "detect_interval": 0.7,       # how often to run YOLO, sec (CPU)
     "detect_on_motion": True,     # run YOLO only when motion is seen — saves a lot of CPU
+    # motion that never turns out to be anything (a cobweb glowing in the IR, rain, branches)
+    # keeps the gate open and YOLO busy for hours. After this many seconds of passes with no
+    # moving wanted object, slow YOLO down to idle_backoff_interval until something is found.
+    # Worst-case extra detection delay is one slow pass (the first hit resets to full rate) —
+    # well inside the pre_seconds buffer, so no footage is lost.
+    "idle_backoff_after": 30,
+    "idle_backoff_interval": 2.0,
     "motion_threshold": 0.5,      # % of the frame that must change to count as motion
     # only auto-record objects that are actually MOVING (a parked car is detected but
     # not recorded); kills clips triggered by static cars + a bug waking the motion gate
@@ -502,6 +509,7 @@ class Camera:
         self.detections_ts = 0.0
         self.last_trigger_ts = 0.0    # last detection of a wanted class
         self._trigger_streak = 0      # consecutive detect passes with a moving wanted object
+        self._empty_passes = 0        # consecutive YOLO passes that found nothing moving (backoff)
 
         self._prev_gray = None        # previous downscaled frame for motion diff
         self._motion_mask = None      # per-pixel motion mask (160x90) — for per-object motion
@@ -856,12 +864,18 @@ class Camera:
     # ---------- detection ----------
     def _detect_loop(self):
         while not self._stop:
-            time.sleep(max(0.1, float(self.shared_cfg["detect_interval"])))
+            interval = float(self.shared_cfg["detect_interval"])
+            idle_after = float(self.shared_cfg.get("idle_backoff_after", 30))
+            if idle_after > 0 and self._empty_passes * interval >= idle_after:
+                interval = max(interval, float(self.shared_cfg.get("idle_backoff_interval", 2.0)))
+            time.sleep(max(0.1, interval))
             # motion gate: skip the costly YOLO pass while the scene is static
             # (plus a ~1s grace after the last motion so brief pauses don't drop it)
             if (self.shared_cfg.get("detect_on_motion", True)
                     and time.time() - self.last_motion_ts > 1.0):
                 self._trigger_streak = 0   # scene went static — break the persistence run
+                if time.time() - self.last_motion_ts > idle_after:
+                    self._empty_passes = 0   # quiet long enough — start the next burst at full rate
                 continue
             with self.lock:
                 frame = self.raw_frame
@@ -946,6 +960,7 @@ class Camera:
             # keeps moving, but a momentary rain streak / IR flicker / bug that clips a
             # box for a single frame does not — so it never starts a recording
             self._trigger_streak = self._trigger_streak + 1 if qualifying else 0
+            self._empty_passes = 0 if qualifying else self._empty_passes + 1
             min_passes = max(1, int(self.shared_cfg.get("trigger_min_passes", 2)))
             if qualifying and self._trigger_streak >= min_passes:
                 self.last_trigger_ts = time.time()
