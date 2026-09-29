@@ -79,8 +79,9 @@ chown -R www-data:www-data /opt/camera-server
 
 - **Logs**: `journalctl -u camera-server -f`
 - **Health**: `https://your-domain.example/api/health`
-- **Retention**: tune `CAMERA_RETENTION_DAYS` (default 30) and/or `CAMERA_MAX_GB`
-  (0 = off) in `.env`, then restart. Run once now: `systemctl start camera-retention`.
+- **Retention**: tune `CAMERA_RETENTION_DAYS` (default 30), `CAMERA_MAX_GB`
+  (0 = off) and `CAMERA_MIN_FREE_GB` (default 5 — oldest clips go first whenever
+  the disk has less free; 0 = off) in `.env`, then restart. Run once now: `systemctl start camera-retention`.
 - **Change the admin password**: `venv/bin/python server.py hash-password 'NEW'`,
   paste into `CAMERA_ADMIN_PASSWORD_HASH` in `.env`, `systemctl restart camera-server`.
 - **The edge's device token** is `CAMERA_DEVICE_TOKEN` in `.env` — put the same

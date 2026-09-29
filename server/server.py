@@ -22,6 +22,7 @@ Config comes from the environment (systemd EnvironmentFile=/opt/camera-server/.e
   CAMERA_DEVICE_TOKEN          shared secret for the edge  (required in prod)
   CAMERA_RETENTION_DAYS        auto-delete clips older than (default: 30; 0=off)
   CAMERA_MAX_GB                cap total storage, GB        (default: 0=off)
+  CAMERA_MIN_FREE_GB           keep this much disk free, GB (default: 5; 0=off)
   CAMERA_VAPID_PUBLIC/PRIVATE/SUBJECT   Web Push keys       (optional; phase: push)
 
 CLI helpers (run with the venv python):
@@ -68,6 +69,9 @@ ADMIN_PASSWORD_HASH = os.environ.get("CAMERA_ADMIN_PASSWORD_HASH", "")
 DEVICE_TOKEN = os.environ.get("CAMERA_DEVICE_TOKEN", "")
 RETENTION_DAYS = int(os.environ.get("CAMERA_RETENTION_DAYS", "30") or 0)
 MAX_GB = float(os.environ.get("CAMERA_MAX_GB", "0") or 0)
+# The box is shared with other services: a full disk takes them down too, so
+# clips give way first even when no size cap is configured.
+MIN_FREE_GB = float(os.environ.get("CAMERA_MIN_FREE_GB", "5") or 0)
 
 SESSION_MAX_AGE = 30 * 24 * 3600   # PWA login token lifetime
 MEDIA_MAX_AGE = 12 * 3600          # signed playback-URL lifetime
@@ -281,7 +285,7 @@ def storage_bytes():
 
 
 # --------------------------------------------------------------------------- #
-# Retention: delete old clips (and, if over the size cap, oldest-first)
+# Retention: delete old clips (and, over the size cap or low on disk, oldest-first)
 # --------------------------------------------------------------------------- #
 def enforce_retention():
     removed = 0
@@ -296,17 +300,29 @@ def enforce_retention():
                 if _delete_clip_file(r["cam_id"], r["name"]):
                     con.execute("DELETE FROM clips WHERE id=?", (r["id"],))
                     removed += 1
-        if MAX_GB > 0:
-            cap = int(MAX_GB * 1e9)
-            while storage_bytes() > cap:
-                r = con.execute(
-                    "SELECT id, cam_id, name FROM clips ORDER BY started_at ASC LIMIT 1"
-                ).fetchone()
-                if not r:
-                    break
-                _delete_clip_file(r["cam_id"], r["name"])
-                con.execute("DELETE FROM clips WHERE id=?", (r["id"],))
-                removed += 1
+        # Size cap and free-space floor: oldest-first until both hold. Sizes are
+        # tallied, not re-measured, so a clip held open by a reader can't make it
+        # overshoot (same approach as the edge's retention.py).
+        cap = MAX_GB * 1e9
+        floor = MIN_FREE_GB * 1e9
+        total = storage_bytes() if cap > 0 else 0
+        free = shutil.disk_usage(DATA_DIR).free if floor > 0 else 0
+        rows = con.execute(
+            "SELECT id, cam_id, name FROM clips ORDER BY started_at ASC"
+        ).fetchall()
+        for r in rows:
+            if not ((cap > 0 and total > cap) or (floor > 0 and free < floor)):
+                break
+            try:
+                size = (RECORDINGS_DIR / r["cam_id"] / r["name"]).stat().st_size
+            except OSError:
+                size = 0
+            if not _delete_clip_file(r["cam_id"], r["name"]):
+                continue   # keep the row: dropping it frees nothing
+            con.execute("DELETE FROM clips WHERE id=?", (r["id"],))
+            removed += 1
+            total -= size
+            free += size
     return removed
 
 
