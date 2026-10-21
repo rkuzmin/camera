@@ -22,6 +22,13 @@ cd /opt/camera-server
 venv/bin/pip install -q --upgrade pip >/dev/null
 venv/bin/pip install -q -r requirements.txt
 chown -R www-data:www-data /opt/camera-server
+# Retention units ship with the code so a schedule change actually reaches the box;
+# run one sweep right away so new retention rules apply without waiting for the timer.
+install -m 644 deploy/camera-retention.service deploy/camera-retention.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable camera-retention.timer
+systemctl restart camera-retention.timer      # pick up a changed OnCalendar
+systemctl start camera-retention.service && echo "retention sweep done"
 if [ -f /etc/systemd/system/camera-server.service ]; then
     if systemctl is-active --quiet camera-server; then
         systemctl reload camera-server && echo "reloaded (graceful, no dropped connections)"
