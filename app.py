@@ -502,6 +502,7 @@ class Camera:
         self.raw_frame = None         # latest raw frame for the detector
         self.connected = False
         self.fps = 15.0
+        self._fps_probe = (0, 0.0)    # (frames seen, stream timestamp of the first one, ms)
         self.error = ""
 
         self.prebuffer = deque()      # (ts, jpeg_bytes) — for pre-recording
@@ -585,9 +586,27 @@ class Camera:
                 self.connected = False
                 self._stop_recording()
                 continue
+            self._measure_fps(cap)
             self._on_captured_frame(frame)
         if cap:
             cap.release()
+
+    def _measure_fps(self, cap, window=50):
+        """Real frame rate from the stream timestamps, re-measured every `window` frames.
+
+        CAP_PROP_FPS reports what the stream header says, and XM cameras keep saying 25
+        after their frame rate is lowered — recording with that would play clips ~2x fast.
+        A camera can also change its rate mid-stream, so this keeps re-checking."""
+        pos = cap.get(cv2.CAP_PROP_POS_MSEC)
+        n, start = self._fps_probe
+        if n < window:
+            self._fps_probe = (n + 1, pos if n == 0 else start)
+            return
+        if pos > start:   # a reconnect / timestamp reset just gives a bogus window — skip it
+            fps = window * 1000.0 / (pos - start)   # frames 1..window+1 span `window` gaps
+            if 1 <= fps <= 60:
+                self.fps = fps
+        self._fps_probe = (0, 0.0)
 
     def _update_motion(self, frame, now):
         """Cheap frame-difference motion gate on a tiny grayscale image (~sub-ms).
