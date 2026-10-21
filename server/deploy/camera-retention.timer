@@ -1,10 +1,12 @@
 [Unit]
-Description=Run camera retention cleanup daily
+Description=Run camera retention cleanup hourly
 
 [Timer]
-OnCalendar=daily
+# Hourly, not daily: the cameras upload ~6 GB/day, more than the 5 GB free-space
+# floor, so a daily sweep let the disk hit 100% between runs.
+OnCalendar=hourly
 Persistent=true
-RandomizedDelaySec=1h
+RandomizedDelaySec=5min
 
 [Install]
 WantedBy=timers.target

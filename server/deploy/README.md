@@ -24,7 +24,8 @@ it light; the edge does the heavy lifting.
 ```
 
 - Service: `camera-server.service` → gunicorn on `127.0.0.1:8090`.
-- Retention: `camera-retention.timer` (daily) → `camera-retention.service`.
+- Retention: `camera-retention.timer` (hourly) → `camera-retention.service`.
+  `deploy.sh` re-installs both units and runs one sweep on every deploy.
 - nginx vhost: `deploy/nginx-camera.conf` → `/etc/nginx/sites-available/your-domain.example`
   (matched by `server_name`; the `00-default-deny.conf` catch-all owns `default_server`).
 - TLS: certbot (`/etc/letsencrypt/live/your-domain.example/`), auto-renews.
