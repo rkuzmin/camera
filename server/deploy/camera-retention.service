@@ -7,4 +7,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/opt/camera-server
 EnvironmentFile=/opt/camera-server/.env
-ExecStart=/opt/camera-server/venv/bin/python server.py retention
+# 10 GB size cap is pinned here (versioned, shipped by deploy.sh), not in .env.
+# Set via `env` so it beats a CAMERA_MAX_GB in .env: a plain Environment= line
+# would lose to EnvironmentFile.
+ExecStart=/usr/bin/env CAMERA_MAX_GB=10 /opt/camera-server/venv/bin/python server.py retention

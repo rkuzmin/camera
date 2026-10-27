@@ -21,7 +21,8 @@ Config comes from the environment (systemd EnvironmentFile=/opt/camera-server/.e
   CAMERA_ADMIN_PASSWORD_HASH   pbkdf2 hash (see gen below) (required in prod)
   CAMERA_DEVICE_TOKEN          shared secret for the edge  (required in prod)
   CAMERA_RETENTION_DAYS        auto-delete clips older than (default: 30; 0=off)
-  CAMERA_MAX_GB                cap total storage, GB        (default: 0=off)
+  CAMERA_MAX_GB                cap total storage, GB        (default: 0=off; prod: 10,
+                               pinned in deploy/camera-retention.service)
   CAMERA_MIN_FREE_GB           keep this much disk free, GB (default: 5; 0=off)
   CAMERA_VAPID_PUBLIC/PRIVATE/SUBJECT   Web Push keys       (optional; phase: push)
 
