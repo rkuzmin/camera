@@ -35,7 +35,7 @@ from uploader import Uploader
 from live import LiveRelay
 from hls import HlsRelay
 from retention import Retention
-from detect_zoom import crop_upscale, motion_rect, tile_motion
+from detect_zoom import box_iou, crop_upscale, motion_rect, seen_parked, tile_motion
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -153,6 +153,10 @@ DEFAULT_CONFIG = {
     # not recorded); kills clips triggered by static cars + a bug waking the motion gate
     "require_object_motion": True,
     "object_motion_threshold": 2.0,  # % of an object's box that must change frame-to-frame
+    # a box that keeps landing where one sat parked_after seconds ago (IoU >= parked_iou)
+    # is parked, however much snow/rain streaks change the pixels inside it
+    "parked_iou": 0.8,
+    "parked_after": 10,
     # a moving object must persist across this many consecutive detection passes before
     # recording starts — a single-pass rain streak / IR flicker / bug that clips an
     # object's box for one frame is ignored. The pre-buffer still backfills the seconds
@@ -458,18 +462,6 @@ def capture_url_for(cam_id, source, shared_cfg):
     return source
 
 
-def _box_iou(a, b):
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-    if inter <= 0:
-        return 0.0
-    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
-    return inter / union if union > 0 else 0.0
-
-
 def get_yolo_model():
     """One model for the whole app — a shared detector across cameras saves memory and CPU."""
     global _yolo_model
@@ -510,7 +502,8 @@ class Camera:
         self.detections_ts = 0.0
         self.last_trigger_ts = 0.0    # last detection of a wanted class
         self._trigger_streak = 0      # consecutive detect passes with a moving wanted object
-        self._empty_passes = 0        # consecutive YOLO passes that found nothing moving (backoff)
+        self._empty_passes = 0        # YOLO passes since the last confirmed trigger (backoff)
+        self._parked_spots = []       # [box, first_seen, last_seen] — see seen_parked()
 
         self._prev_gray = None        # previous downscaled frame for motion diff
         self._motion_mask = None      # per-pixel motion mask (160x90) — for per-object motion
@@ -675,6 +668,18 @@ class Camera:
         frac = np.count_nonzero(region) / region.size
         excess = frac - self._motion_frac   # box motion above the ambient (rain/snow) floor
         return excess * 100.0 >= float(self.shared_cfg.get("object_motion_threshold", 2.0))
+
+    def _object_moving(self, box, frame_shape, now):
+        """A wanted object triggers recording only if it's actually moving (unless the
+        user turned that off): its pixels change above the ambient floor AND its box
+        isn't sitting where one has sat for a while. The second check is what keeps
+        snow streaks crossing a parked car from recording all evening."""
+        parked = seen_parked(self._parked_spots, box, now,
+                             float(self.shared_cfg.get("parked_iou", 0.8)),
+                             float(self.shared_cfg.get("parked_after", 10)))
+        if not self.shared_cfg.get("require_object_motion", True):
+            return True
+        return not parked and self._box_is_moving(box, frame_shape)
 
     def _on_captured_frame(self, frame):
         """Capture-thread hot path — kept deliberately light so cap.read() runs again
@@ -885,7 +890,9 @@ class Camera:
         while not self._stop:
             interval = float(self.shared_cfg["detect_interval"])
             idle_after = float(self.shared_cfg.get("idle_backoff_after", 30))
-            if idle_after > 0 and self._empty_passes * interval >= idle_after:
+            # a pass that just saw something moving is followed up at full rate, so a real
+            # object still costs at most one slow pass before it's confirmed
+            if idle_after > 0 and self._empty_passes * interval >= idle_after and not self._trigger_streak:
                 interval = max(interval, float(self.shared_cfg.get("idle_backoff_interval", 2.0)))
             time.sleep(max(0.1, interval))
             # motion gate: skip the costly YOLO pass while the scene is static
@@ -913,7 +920,7 @@ class Camera:
             except Exception as e:
                 self.error = f"Detector error: {e}"
                 continue
-            require_motion = self.shared_cfg.get("require_object_motion", True)
+            now = time.time()
             dets = []
             qualifying = False    # a wanted object that is moving on THIS pass
             trigger_label = ""
@@ -921,9 +928,7 @@ class Camera:
                 cls = int(box.cls[0])
                 label = names[cls]
                 x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
-                # a wanted object triggers recording only if it's actually moving
-                # (unless the user turned that off) — parked cars stay unrecorded
-                moving = not require_motion or self._box_is_moving([x1, y1, x2, y2], frame.shape)
+                moving = self._object_moving([x1, y1, x2, y2], frame.shape, now)
                 dets.append({"label": label, "conf": float(box.conf[0]), "box": [x1, y1, x2, y2],
                              "moving": moving})
                 if cls in wanted_ids and moving:
@@ -960,9 +965,9 @@ class Camera:
                     zx1, zy1, zx2, zy2 = (float(v) for v in box.xyxy[0])
                     mapped = [int(zx1 / zscale) + zx_off, int(zy1 / zscale) + zy_off,
                               int(zx2 / zscale) + zx_off, int(zy2 / zscale) + zy_off]
-                    if any(d["label"] == label and _box_iou(d["box"], mapped) > 0.3 for d in dets):
+                    if any(d["label"] == label and box_iou(d["box"], mapped) > 0.3 for d in dets):
                         continue
-                    moving = not require_motion or self._box_is_moving(mapped, frame.shape)
+                    moving = self._object_moving(mapped, frame.shape, now)
                     dets.append({"label": label, "conf": float(box.conf[0]), "box": mapped,
                                  "moving": moving})
                     if cls in wanted_ids and moving:
@@ -979,9 +984,12 @@ class Camera:
             # keeps moving, but a momentary rain streak / IR flicker / bug that clips a
             # box for a single frame does not — so it never starts a recording
             self._trigger_streak = self._trigger_streak + 1 if qualifying else 0
-            self._empty_passes = 0 if qualifying else self._empty_passes + 1
             min_passes = max(1, int(self.shared_cfg.get("trigger_min_passes", 2)))
-            if qualifying and self._trigger_streak >= min_passes:
+            confirmed = qualifying and self._trigger_streak >= min_passes
+            # only a CONFIRMED trigger resets the backoff: in snow a lone false "moving" pass
+            # every ~10 s would otherwise keep YOLO at full rate forever
+            self._empty_passes = 0 if confirmed else self._empty_passes + 1
+            if confirmed:
                 self.last_trigger_ts = time.time()
                 if _uploader is not None:
                     _uploader.notify_event(self.id, self.name, trigger_label)
