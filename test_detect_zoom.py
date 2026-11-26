@@ -2,7 +2,7 @@
 """Self-check for detect_zoom.py: `python test_detect_zoom.py` (no pytest)."""
 import numpy as np
 
-from detect_zoom import crop_upscale, motion_rect, tile_motion
+from detect_zoom import box_iou, crop_upscale, motion_rect, seen_parked, tile_motion
 
 MASK_W, MASK_H = 160, 90          # the detector's motion grid
 
@@ -57,6 +57,31 @@ def test_crop_upscale_maps_boxes_back_to_full_frame():
 
     assert crop_upscale(frame, None) is None
     assert crop_upscale(frame, [0.5, 0.5, 0.5001, 0.5001]) is None   # too small to bother
+
+
+def test_parked_box_is_parked_but_a_moving_one_is_not():
+    spots = []
+    car = [700, 250, 1110, 560]
+    # a parked car, YOLO jitter of a few px each pass: parked only after the dwell
+    for i in range(20):
+        jit = (i % 3) * 3
+        parked = seen_parked(spots, [car[0] + jit, car[1], car[2] + jit, car[3] - jit], i * 0.7)
+        assert parked == (i * 0.7 >= 10.0), (i, parked)
+    # a car driving past shifts its box well past the IoU cutoff every pass: never parked
+    for i in range(20):
+        assert not seen_parked(spots, [100 + 150 * i, 600, 500 + 150 * i, 900], 20 + i * 0.7)
+    # once parked, it stays parked through a gap: still known a minute later...
+    assert seen_parked(spots, car, 60.0)
+    # ...but forgotten after the ttl without a sighting
+    assert not seen_parked(spots, car, 60.0 + 301)
+    # someone pacing back and forth revisits the same spots, but never for an unbroken
+    # dwell: each revisit after a gap starts the clock over, so they never count as parked
+    spots = []
+    walker = [[300 + 40 * k, 200, 400 + 40 * k, 500] for k in range(10)]
+    path = walker + walker[::-1]           # a 14 s lap at one pass per 0.7 s
+    for i in range(100):
+        assert not seen_parked(spots, path[i % len(path)], i * 0.7), i
+    assert box_iou(car, car) == 1.0 and box_iou(car, [0, 0, 10, 10]) == 0.0
 
 
 if __name__ == "__main__":

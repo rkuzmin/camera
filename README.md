@@ -155,8 +155,9 @@ DVRIP configuration.
 | `retention_gb` | size cap for `recordings/` — oldest clips are deleted first (0 = no limit) |
 | `min_free_gb` | always keep this much free disk space (2 GB by default; 0 = off). Without it the disk fills up and recording silently stops |
 | `detect_on_motion` | run YOLO only when motion is detected — saves CPU (on by default) |
-| `idle_backoff_after` / `idle_backoff_interval` | after N sec (default 30) of motion with no moving object found, run YOLO only every M sec (default 2) until something is found — stops a cobweb/rain/branches from keeping the detector busy; 0 = off |
+| `idle_backoff_after` / `idle_backoff_interval` | after N sec (default 30) of motion with no confirmed trigger, run YOLO only every M sec (default 2) until something is confirmed (a single-pass blip doesn't count) — stops a cobweb/rain/snow/branches from keeping the detector busy; 0 = off |
 | `motion_threshold` | % of the frame that must change to count as motion |
+| `parked_after` / `parked_iou` | an object whose box has stayed in the same place for N sec (default 10; same place = box overlap ≥ `parked_iou`, default 0.8) counts as parked and never triggers recording — stops snow/rain streaks crossing a parked car from recording all evening |
 | `record_mode` | `annotated` — H.264 re-encode with pre-buffer (clean image, no boxes); `copy` — raw stream with no re-encoding, with audio (see below) |
 | `view_mode` | `mjpeg` (default) or `webrtc` — low-latency viewing via go2rtc |
 | `capture_via_go2rtc` | pull the detector's frames from the go2rtc restream — a single connection to the camera for both viewing and detection |
